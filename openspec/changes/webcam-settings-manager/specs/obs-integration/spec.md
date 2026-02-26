@@ -26,7 +26,7 @@ The system SHALL be able to read and set properties on OBS video capture sources
 
 #### Scenario: User switches camera in OBS from the app
 
-- **WHEN** the user selects a different camera in the webcam settings manager
+- **WHEN** the user selects a different camera in the camera settings manager
 - **THEN** the corresponding OBS video capture source can be updated to match (with user confirmation)
 
 ### Requirement: OBS connection persistence

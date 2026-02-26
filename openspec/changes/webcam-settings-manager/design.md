@@ -1,6 +1,6 @@
 ## Context
 
-This is a greenfield desktop application for managing webcam settings across Windows, macOS, and Linux. There is no existing codebase. The app targets streamers, content creators, and remote workers who need unified control over multiple cameras with professional-grade features (presets, colour grading, virtual camera output).
+This is a greenfield desktop application for managing camera settings across Windows, macOS, and Linux. There is no existing codebase. The app targets streamers, content creators, and remote workers who need unified control over multiple cameras with professional-grade features (presets, colour grading, virtual camera output).
 
 The technology stack is prescribed: **Tauri v2** (Rust backend) + **React** (TypeScript frontend). Tauri v2 provides cross-platform desktop packaging with native system tray, auto-updater, and IPC between Rust and the webview.
 
@@ -172,9 +172,9 @@ The app writes processed frames to the virtual device. This is the most complex 
 
 Presets are stored as JSON files in the OS-appropriate app data directory:
 
-- Windows: `%APPDATA%/webcam-settings-manager/presets/`
-- macOS: `~/Library/Application Support/webcam-settings-manager/presets/`
-- Linux: `~/.config/webcam-settings-manager/presets/`
+- Windows: `%APPDATA%/cameras/presets/`
+- macOS: `~/Library/Application Support/cameras/presets/`
+- Linux: `~/.config/cameras/presets/`
 
 Structure: `presets/<camera-id>/<preset-name>.json`
 

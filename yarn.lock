@@ -1859,6 +1859,39 @@ __metadata:
   languageName: node
   linkType: hard
 
+"cameras@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "cameras@workspace:."
+  dependencies:
+    "@eslint/js": "npm:9"
+    "@tauri-apps/api": "npm:^2.2.0"
+    "@tauri-apps/cli": "npm:^2.10.0"
+    "@testing-library/dom": "npm:^10.4.1"
+    "@testing-library/jest-dom": "npm:^6.9.1"
+    "@testing-library/react": "npm:^16.3.2"
+    "@testing-library/user-event": "npm:^14.6.1"
+    "@types/jsdom": "npm:^28"
+    "@types/react": "npm:^19.0.0"
+    "@types/react-dom": "npm:^19.0.0"
+    "@vitejs/plugin-react": "npm:^4.3.0"
+    eslint: "npm:9"
+    eslint-config-prettier: "npm:^10.1.8"
+    eslint-plugin-react-hooks: "npm:^7.0.1"
+    eslint-plugin-react-refresh: "npm:^0.5.2"
+    husky: "npm:^9.1.7"
+    jsdom: "npm:^28.1.0"
+    lint-staged: "npm:^16.2.7"
+    prettier: "npm:^3.8.1"
+    react: "npm:^19.0.0"
+    react-dom: "npm:^19.0.0"
+    typescript: "npm:^5.7.0"
+    typescript-eslint: "npm:^8.56.1"
+    vite: "npm:^6.1.0"
+    vitest: "npm:^4.0.18"
+    zustand: "npm:^5.0.11"
+  languageName: unknown
+  linkType: soft
+
 "caniuse-lite@npm:^1.0.30001759":
   version: 1.0.30001774
   resolution: "caniuse-lite@npm:1.0.30001774"
@@ -4185,39 +4218,6 @@ __metadata:
   checksum: 10/d78f59e6b4f924aa53b6dfc56949959229cae7fe05ea9374eb38d11edcec01398b7f5d7a12576bd5acc57ff446abb5c9115cd83b9d882555015437cf858d42f0
   languageName: node
   linkType: hard
-
-"webcam-settings@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "webcam-settings@workspace:."
-  dependencies:
-    "@eslint/js": "npm:9"
-    "@tauri-apps/api": "npm:^2.2.0"
-    "@tauri-apps/cli": "npm:^2.10.0"
-    "@testing-library/dom": "npm:^10.4.1"
-    "@testing-library/jest-dom": "npm:^6.9.1"
-    "@testing-library/react": "npm:^16.3.2"
-    "@testing-library/user-event": "npm:^14.6.1"
-    "@types/jsdom": "npm:^28"
-    "@types/react": "npm:^19.0.0"
-    "@types/react-dom": "npm:^19.0.0"
-    "@vitejs/plugin-react": "npm:^4.3.0"
-    eslint: "npm:9"
-    eslint-config-prettier: "npm:^10.1.8"
-    eslint-plugin-react-hooks: "npm:^7.0.1"
-    eslint-plugin-react-refresh: "npm:^0.5.2"
-    husky: "npm:^9.1.7"
-    jsdom: "npm:^28.1.0"
-    lint-staged: "npm:^16.2.7"
-    prettier: "npm:^3.8.1"
-    react: "npm:^19.0.0"
-    react-dom: "npm:^19.0.0"
-    typescript: "npm:^5.7.0"
-    typescript-eslint: "npm:^8.56.1"
-    vite: "npm:^6.1.0"
-    vitest: "npm:^4.0.18"
-    zustand: "npm:^5.0.11"
-  languageName: unknown
-  linkType: soft
 
 "webidl-conversions@npm:^8.0.1":
   version: 8.0.1

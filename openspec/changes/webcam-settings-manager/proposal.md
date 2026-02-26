@@ -1,8 +1,8 @@
 ## Why
 
-Most webcams ship with terrible or nonexistent control software. Windows Camera, OBS, and video call apps expose only a handful of settings — users with professional or prosumer cameras (GoPro Hero 12, Canon EOS2000D, Logitech Brio, etc.) have no unified way to discover, configure, and persist the full range of hardware controls. Streamers, content creators, and remote workers waste time re-adjusting settings every session, across every app, with no way to save, share, or automate their configurations.
+Most cameras ship with terrible or nonexistent control software. Windows Camera, OBS, and video call apps expose only a handful of settings — users with professional or prosumer cameras (GoPro Hero 12, Canon EOS2000D, Logitech Brio, etc.) have no unified way to discover, configure, and persist the full range of hardware controls. Streamers, content creators, and remote workers waste time re-adjusting settings every session, across every app, with no way to save, share, or automate their configurations.
 
-A dedicated webcam settings manager that auto-discovers all connected cameras, dynamically enumerates their capabilities, and provides a polished control surface with presets, persistence, and virtual camera output fills this gap.
+A dedicated camera settings manager that auto-discovers all connected cameras, dynamically enumerates their capabilities, and provides a polished control surface with presets, persistence, and virtual camera output fills this gap.
 
 ## What Changes
 
