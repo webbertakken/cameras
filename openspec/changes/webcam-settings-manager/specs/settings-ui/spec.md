@@ -1,12 +1,42 @@
 ## ADDED Requirements
 
-### Requirement: Accordion-based settings layout
-The system SHALL organise camera controls into collapsible accordion sections, implementing progressive disclosure so users see only what matters at each moment.
+### Requirement: Two-tier settings architecture (native vs software processing)
+The system SHALL separate camera settings into two distinct tiers: **native hardware controls** (zero processing cost, applied directly by the camera) and **software processing controls** (CPU/GPU cost, applied in the app's processing pipeline). Native controls SHALL always appear first. Software processing controls SHALL be in a separate "Additional settings" section that the user must explicitly enable.
 
-#### Scenario: User views settings for a camera with many controls
-- **WHEN** the user selects a camera that supports 15+ controls
-- **THEN** controls are grouped into accordion sections (e.g. "Image", "Exposure & White Balance", "Focus & Zoom", "Advanced", "Colour Grading")
+#### Scenario: User views settings for a camera
+- **WHEN** the user selects a camera
+- **THEN** native hardware controls (brightness, contrast, saturation, white balance, exposure, gain, sharpness, zoom, focus, etc.) are shown first in accordion sections
+- **AND** below them, a clearly labelled "Additional settings" section is shown in a disabled/collapsed state with a toggle to enable it
+- **AND** the additional settings section indicates it uses CPU/GPU processing
+
+#### Scenario: User enables additional settings
+- **WHEN** the user toggles "Additional settings" on
+- **THEN** the software processing controls expand (colour grading, LUT, digital zoom, overlays)
+- **AND** the software processing pipeline activates for that camera
+- **AND** a subtle indicator shows that processing is active (e.g. a small badge or icon)
+
+#### Scenario: User disables additional settings
+- **WHEN** the user toggles "Additional settings" off
+- **THEN** all software processing is bypassed — the feed is raw from the camera with only native hardware controls applied
+- **AND** the additional settings section collapses back to its disabled state
+- **AND** any virtual camera output reverts to the unprocessed feed
+
+#### Scenario: Additional settings preference persists per camera
+- **WHEN** the user enables additional settings for Camera A but not Camera B
+- **THEN** switching to Camera B shows additional settings disabled
+- **AND** switching back to Camera A shows additional settings enabled with previous software processing values restored
+
+### Requirement: Accordion-based settings layout
+Within each tier (native and additional), the system SHALL organise controls into collapsible accordion sections, implementing progressive disclosure so users see only what matters at each moment.
+
+#### Scenario: User views native settings for a camera with many controls
+- **WHEN** the user selects a camera that supports 15+ native hardware controls
+- **THEN** native controls are grouped into accordion sections (e.g. "Image", "Exposure & White Balance", "Focus & Zoom", "Advanced")
 - **AND** only the most commonly used section is expanded by default
+
+#### Scenario: User views additional settings when enabled
+- **WHEN** the user has enabled additional settings
+- **THEN** software controls are grouped into accordion sections (e.g. "Colour Grading", "LUT", "Digital Zoom", "Overlays")
 
 #### Scenario: User expands a section
 - **WHEN** the user clicks on a collapsed "Focus & Zoom" section

@@ -271,6 +271,33 @@ The project uses a 6-workflow GitHub Actions setup, adapted from the proven patt
 - **Manual release process:** Error-prone, doesn't scale across 5 platform targets, and misses auto-updater manifest generation.
 - **Single monolithic CI workflow:** Harder to maintain, slower feedback (quality checks blocked by full cross-platform builds), and poor separation of concerns.
 
+### Decision 14: Two-tier settings — native hardware vs software processing
+
+The settings UI is split into two distinct tiers:
+
+1. **Native hardware controls** (always visible, zero processing cost) — brightness, contrast, saturation, white balance, exposure, gain, sharpness, zoom, focus, pan/tilt, etc. These are applied directly by the camera hardware via UVC commands. They appear first in the settings panel.
+
+2. **Additional settings / software processing** (opt-in, CPU/GPU cost) — colour grading, LUT application, digital zoom, overlays. These require the app's processing pipeline (wgpu compute shaders or CPU fallback) to be active. They are behind an explicit "Additional settings" toggle that the user must enable.
+
+**UI layout order:**
+```
+[Camera sidebar] | [Preview] | [Settings panel]
+                                ├── Native controls (accordion sections)
+                                │   ├── Image (brightness, contrast, saturation, ...)
+                                │   ├── Exposure & White Balance
+                                │   ├── Focus & Zoom (hardware only)
+                                │   └── Advanced (pan/tilt, gamma, ...)
+                                └── Additional settings [toggle: OFF by default]
+                                    ├── Colour Grading (temperature, tint, RGB)
+                                    ├── LUT
+                                    ├── Digital Zoom
+                                    └── Overlays (text, images, borders, watermarks)
+```
+
+When additional settings are disabled, the processing pipeline is completely bypassed — frames go directly from capture to preview/virtual camera with zero software processing overhead. The toggle state persists per camera.
+
+**Rationale:** This gives users a clear mental model: native controls are "free" and always available; software processing is a conscious opt-in with a visible cost indicator. It also means users who just want to tweak their camera's built-in settings get a snappy, lightweight experience without unnecessary GPU pipeline initialisation.
+
 ## Risks / Trade-offs
 
 - **Frame delivery performance** — Sending JPEG frames via IPC at 30fps may introduce latency or CPU overhead. Mitigation: benchmark early in Phase 1; if inadequate, explore native rendering via Tauri window hooks or a dedicated Rust-side rendering surface.

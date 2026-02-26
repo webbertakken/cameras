@@ -27,7 +27,8 @@ This is a greenfield application. All capabilities are new.
 - Full diagnostic overlay — resolution, fps, format, bandwidth, dropped frames, latency, USB bus info
 - Unsupported controls shown greyed out with explanatory tooltips
 - Architecture designed for future extensibility (virtual backgrounds, blur, filters)
-- Accordion-based progressive disclosure for settings organisation
+- Two-tier settings: native hardware controls (zero cost, always visible) first, software processing controls (CPU/GPU cost) behind an opt-in "Additional settings" toggle
+- Accordion-based progressive disclosure for settings organisation within each tier
 - Full WCAG 2.2 AA compliance with regular accessibility audits
 - System theme following (light/dark) with OS detection
 - Distribution via GitHub releases + Tauri auto-updater
