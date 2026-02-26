@@ -10,10 +10,13 @@ mod preset;
 mod preview;
 mod tray;
 
+use tauri::Manager;
+
 use camera::commands::{
     get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
     set_camera_control, CameraState,
 };
+use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{get_frame, get_thumbnail, start_preview, stop_preview, PreviewState};
 
 /// Create the camera backend for the current platform.
@@ -122,6 +125,9 @@ pub fn run() {
             }
 
             tray::setup_tray(app.handle())?;
+
+            let camera_state = app.state::<CameraState>();
+            start_hotplug_watcher(app.handle(), camera_state.backend.as_ref());
 
             Ok(())
         })
