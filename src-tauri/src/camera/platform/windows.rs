@@ -51,10 +51,12 @@ impl DeviceEnumerator for DirectShowEnumerator {
 /// Core DirectShow device enumeration.
 ///
 /// # Safety
-/// Calls COM APIs. Must be called on a COM-initialised thread.
+/// Calls COM APIs. Initialises COM (MTA) via a scoped guard.
 unsafe fn enumerate_directshow_devices() -> Result<Vec<RawDeviceInfo>> {
     use windows::Win32::Media::DirectShow::ICreateDevEnum;
     use windows::Win32::System::Com::IMoniker;
+
+    let _guard = ComGuard::init()?;
 
     let dev_enum: ICreateDevEnum =
         CoCreateInstance(&CLSID_SystemDeviceEnum, None, CLSCTX_INPROC_SERVER).map_err(|e| {
@@ -181,14 +183,11 @@ pub struct WindowsBackend {
 impl WindowsBackend {
     /// Create a new backend with the real DirectShow
     /// enumerator.
-    pub fn new() -> Result<Self> {
-        let _guard = ComGuard::init()?;
-        std::mem::forget(_guard);
-
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             enumerator: Box::new(DirectShowEnumerator::new()),
             known_devices: Arc::new(Mutex::new(HashMap::new())),
-        })
+        }
     }
 
     /// Create a backend with a custom enumerator (for
@@ -302,6 +301,8 @@ unsafe fn find_device_filter(
 ) -> Result<windows::Win32::Media::DirectShow::IBaseFilter> {
     use windows::Win32::Media::DirectShow::ICreateDevEnum;
     use windows::Win32::System::Com::IMoniker;
+
+    let _guard = ComGuard::init()?;
 
     let dev_enum: ICreateDevEnum =
         CoCreateInstance(&CLSID_SystemDeviceEnum, None, CLSCTX_INPROC_SERVER)
