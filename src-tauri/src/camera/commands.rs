@@ -66,10 +66,7 @@ pub async fn set_camera_control(
         })?;
 
     if desc.flags.is_read_only {
-        return Err(format!(
-            "Control '{}' is read-only",
-            control.display_name()
-        ));
+        return Err(format!("Control '{}' is read-only", control.display_name()));
     }
 
     let clamped = ControlValue::new(value, desc.min, desc.max);
@@ -264,7 +261,10 @@ mod tests {
 
     #[test]
     fn parse_control_id_accepts_valid_strings() {
-        assert_eq!(parse_control_id("brightness").unwrap(), ControlId::Brightness);
+        assert_eq!(
+            parse_control_id("brightness").unwrap(),
+            ControlId::Brightness
+        );
         assert_eq!(parse_control_id("exposure").unwrap(), ControlId::Exposure);
         assert_eq!(
             parse_control_id("white_balance").unwrap(),

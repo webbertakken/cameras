@@ -569,10 +569,7 @@ unsafe fn set_device_control(
         cam_ctrl
             .Set(prop_index, value.value(), 2) // 2 = manual mode
             .map_err(|e| {
-                CameraError::ControlWrite(format!(
-                    "Failed to set {name} to {}: {e}",
-                    value.value()
-                ))
+                CameraError::ControlWrite(format!("Failed to set {name} to {}: {e}", value.value()))
             })?;
     } else if let Some(prop_index) = control_id_to_procamp_property(control) {
         let video_proc = filter.cast::<IAMVideoProcAmp>().map_err(|e| {
@@ -584,10 +581,7 @@ unsafe fn set_device_control(
         video_proc
             .Set(prop_index, value.value(), 2) // 2 = manual mode
             .map_err(|e| {
-                CameraError::ControlWrite(format!(
-                    "Failed to set {name} to {}: {e}",
-                    value.value()
-                ))
+                CameraError::ControlWrite(format!("Failed to set {name} to {}: {e}", value.value()))
             })?;
     } else {
         return Err(CameraError::ControlWrite(format!(
@@ -1023,10 +1017,7 @@ mod tests {
 
     #[test]
     fn camera_property_maps_exposure_to_4() {
-        assert_eq!(
-            control_id_to_camera_property(&ControlId::Exposure),
-            Some(4)
-        );
+        assert_eq!(control_id_to_camera_property(&ControlId::Exposure), Some(4));
     }
 
     #[test]
@@ -1041,10 +1032,7 @@ mod tests {
 
     #[test]
     fn camera_property_returns_none_for_procamp_controls() {
-        assert_eq!(
-            control_id_to_camera_property(&ControlId::Brightness),
-            None
-        );
+        assert_eq!(control_id_to_camera_property(&ControlId::Brightness), None);
         assert_eq!(control_id_to_camera_property(&ControlId::Contrast), None);
         assert_eq!(control_id_to_camera_property(&ControlId::Gain), None);
         assert_eq!(
