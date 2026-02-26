@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug fixes" },
+    { "type": "perf", "section": "Performance improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "deps", "section": "Dependencies" },
+    { "type": "docs", "section": "Maintenance" },
+    { "type": "style", "section": "Maintenance" },
+    { "type": "chore", "section": "Maintenance" },
+    { "type": "ci", "section": "Maintenance" },
+    { "type": "test", "section": "Maintenance" },
+    { "type": "refactor", "section": "Maintenance" },
+    { "type": "build", "section": "Maintenance" }
+  ],
+  "packages": {
+    ".": {
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "src-tauri/tauri.conf.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "src-tauri/Cargo.toml",
+          "regex": "^version = \"(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\""
+        }
+      ]
+    }
+  }
+}

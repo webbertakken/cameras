@@ -1,0 +1,79 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: corepack enable && corepack install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile --immutable
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Test
+        run: yarn test
+
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: corepack enable && corepack install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile --immutable
+
+      - name: Check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: Format check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
