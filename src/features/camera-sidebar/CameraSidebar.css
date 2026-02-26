@@ -1,0 +1,40 @@
+.camera-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 200px;
+  min-width: 200px;
+  height: 100%;
+  background-color: var(--colour-bg-secondary);
+  border-right: 1px solid var(--colour-border);
+  padding: var(--space-3);
+  overflow-y: auto;
+}
+
+.camera-sidebar__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Empty state */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.empty-state__icon {
+  width: 48px;
+  height: 48px;
+  color: var(--colour-text-disabled);
+}
+
+.empty-state__text {
+  font-size: var(--font-size-sm);
+  color: var(--colour-text-secondary);
+}
