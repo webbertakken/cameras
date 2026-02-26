@@ -199,11 +199,9 @@ mod tests {
         let result = backend.watch_hotplug(Box::new(|_| {}));
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("device manager unavailable"),
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("device manager unavailable"),);
     }
 }
