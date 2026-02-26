@@ -1,0 +1,54 @@
+.camera-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+  outline: none;
+}
+
+.camera-entry:hover {
+  background-color: var(--colour-bg-tertiary);
+}
+
+.camera-entry:focus-visible {
+  border-color: var(--colour-border-focus);
+  box-shadow: 0 0 0 2px var(--colour-border-focus);
+}
+
+.camera-entry--selected {
+  background-color: var(--colour-bg-tertiary);
+  border-color: var(--colour-accent);
+}
+
+.camera-entry__thumbnail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 60px;
+  border-radius: var(--radius-sm);
+  background-color: var(--colour-bg-secondary);
+  color: var(--colour-text-secondary);
+}
+
+.camera-entry__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.camera-entry__name {
+  font-size: var(--font-size-sm);
+  color: var(--colour-text-primary);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
