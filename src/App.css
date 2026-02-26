@@ -5,7 +5,20 @@
 }
 
 .app-main {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   padding: var(--space-6);
   overflow-y: auto;
+  gap: var(--space-4);
+}
+
+.app-main__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--color-text-muted, #888);
+  font-size: 0.875rem;
+  user-select: none;
 }
