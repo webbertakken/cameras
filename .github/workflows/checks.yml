@@ -16,13 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: volta-cli/action@v4
+      - run: corepack enable && corepack install
 
-      - name: Enable Corepack
-        run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
 
-      - name: Install dependencies
-        run: yarn install --immutable
+      - run: yarn install --frozen-lockfile --immutable
 
       - name: Lint
         run: yarn lint
@@ -39,18 +40,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: './src-tauri -> target'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev
+      - run: corepack enable && corepack install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile --immutable
 
       - name: Check
         working-directory: src-tauri
