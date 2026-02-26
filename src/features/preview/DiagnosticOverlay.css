@@ -30,6 +30,13 @@
   text-align: right;
 }
 
+.diagnostic-overlay__truncate {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .diagnostic-overlay__toggle {
   position: absolute;
   top: 8px;

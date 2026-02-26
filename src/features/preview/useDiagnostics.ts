@@ -8,6 +8,7 @@ export interface DiagnosticSnapshot {
   dropRate: number
   latencyMs: number
   bandwidthBps: number
+  usbBusInfo: string | null
 }
 
 /** Polls diagnostic stats at 1fps (1000ms interval). */
