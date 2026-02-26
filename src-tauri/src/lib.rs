@@ -1,8 +1,84 @@
+#[allow(dead_code)]
 mod camera;
 mod input;
 mod integration;
 mod pipeline;
 mod preset;
+
+use camera::commands::{get_camera_controls, get_camera_formats, list_cameras, CameraState};
+
+/// Create the camera backend for the current platform.
+fn create_camera_state() -> CameraState {
+    #[cfg(target_os = "windows")]
+    {
+        use camera::platform::WindowsBackend;
+        match WindowsBackend::new() {
+            Ok(backend) => CameraState {
+                backend: Box::new(backend),
+            },
+            Err(e) => {
+                tracing::error!("Failed to create Windows camera backend: {e}");
+                // Fallback: empty mock that returns no devices
+                CameraState {
+                    backend: Box::new(NullBackend),
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        CameraState {
+            backend: Box::new(NullBackend),
+        }
+    }
+}
+
+/// No-op backend used when the real backend fails to initialise.
+struct NullBackend;
+
+impl camera::backend::CameraBackend for NullBackend {
+    fn enumerate_devices(&self) -> camera::error::Result<Vec<camera::types::CameraDevice>> {
+        Ok(vec![])
+    }
+    fn watch_hotplug(
+        &self,
+        _callback: Box<dyn Fn(camera::types::HotplugEvent) + Send>,
+    ) -> camera::error::Result<()> {
+        Ok(())
+    }
+    fn get_controls(
+        &self,
+        _id: &camera::types::DeviceId,
+    ) -> camera::error::Result<Vec<camera::types::ControlDescriptor>> {
+        Ok(vec![])
+    }
+    fn get_control(
+        &self,
+        _id: &camera::types::DeviceId,
+        _control: &camera::types::ControlId,
+    ) -> camera::error::Result<camera::types::ControlValue> {
+        Err(camera::error::CameraError::DeviceNotFound(
+            "no backend".to_string(),
+        ))
+    }
+    fn set_control(
+        &self,
+        _id: &camera::types::DeviceId,
+        _control: &camera::types::ControlId,
+        _value: camera::types::ControlValue,
+    ) -> camera::error::Result<()> {
+        Err(camera::error::CameraError::DeviceNotFound(
+            "no backend".to_string(),
+        ))
+    }
+    fn get_formats(
+        &self,
+        _id: &camera::types::DeviceId,
+    ) -> camera::error::Result<Vec<camera::types::FormatDescriptor>> {
+        Ok(vec![])
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,6 +90,12 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .manage(create_camera_state())
+        .invoke_handler(tauri::generate_handler![
+            list_cameras,
+            get_camera_controls,
+            get_camera_formats,
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
