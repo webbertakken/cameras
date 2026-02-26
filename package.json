@@ -62,7 +62,7 @@
       "prettier --write"
     ],
     "*.rs": [
-      "rustfmt --edition 2024"
+      "rustfmt --edition 2021"
     ]
   }
 }

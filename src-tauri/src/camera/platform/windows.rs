@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, error, info, warn};
+use windows::core::{Interface, GUID};
 use windows::Win32::Media::DirectShow::{IAMCameraControl, IAMVideoProcAmp};
 use windows::Win32::Media::MediaFoundation::{
     CLSID_SystemDeviceEnum, CLSID_VideoInputDeviceCategory,
 };
 use windows::Win32::System::Com::StructuredStorage::IPropertyBag;
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoCreateInstance,
-    CoInitializeEx, CoUninitialize,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
 };
 use windows::Win32::System::Variant::VARIANT;
-use windows::core::{GUID, Interface};
 
 use crate::camera::backend::CameraBackend;
 use crate::camera::error::{CameraError, Result};
@@ -737,9 +737,10 @@ fn run_hotplug_loop(
     _callback: Box<dyn Fn(HotplugEvent) + Send>,
 ) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DEV_BROADCAST_DEVICEINTERFACE_W, DispatchMessageW,
-        GetMessageW, HWND_MESSAGE, MSG, REGISTER_NOTIFICATION_FLAGS, RegisterClassW,
-        RegisterDeviceNotificationW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
+        RegisterDeviceNotificationW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+        DEV_BROADCAST_DEVICEINTERFACE_W, HWND_MESSAGE, MSG, REGISTER_NOTIFICATION_FLAGS,
+        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
     };
 
     unsafe {

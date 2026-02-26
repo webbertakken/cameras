@@ -11,10 +11,10 @@ mod preview;
 mod tray;
 
 use camera::commands::{
-    CameraState, get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
-    set_camera_control,
+    get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
+    set_camera_control, CameraState,
 };
-use preview::commands::{PreviewState, get_frame, get_thumbnail, start_preview, stop_preview};
+use preview::commands::{get_frame, get_thumbnail, start_preview, stop_preview, PreviewState};
 
 /// Create the camera backend for the current platform.
 fn create_camera_state() -> CameraState {
