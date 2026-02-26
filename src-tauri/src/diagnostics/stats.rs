@@ -9,6 +9,7 @@ pub struct DiagnosticStats {
     start_time: Instant,
     last_frame_time: Option<Instant>,
     latency_us: u64,
+    usb_bus_info: Option<String>,
 }
 
 /// Snapshot of diagnostic stats for IPC serialisation.
@@ -21,6 +22,7 @@ pub struct DiagnosticSnapshot {
     pub drop_rate: f64,
     pub latency_ms: f64,
     pub bandwidth_bps: u64,
+    pub usb_bus_info: Option<String>,
 }
 
 impl DiagnosticStats {
@@ -33,7 +35,13 @@ impl DiagnosticStats {
             start_time: Instant::now(),
             last_frame_time: None,
             latency_us: 0,
+            usb_bus_info: None,
         }
+    }
+
+    /// Set USB bus information for this camera session.
+    pub fn set_usb_bus_info(&mut self, info: Option<String>) {
+        self.usb_bus_info = info;
     }
 
     /// Record a successfully captured frame.
@@ -94,6 +102,7 @@ impl DiagnosticStats {
         self.start_time = Instant::now();
         self.last_frame_time = None;
         self.latency_us = 0;
+        self.usb_bus_info = None;
     }
 
     /// Take a serialisable snapshot.
@@ -105,6 +114,7 @@ impl DiagnosticStats {
             drop_rate: self.drop_rate(),
             latency_ms: self.latency_ms(),
             bandwidth_bps: self.bandwidth_bps(),
+            usb_bus_info: self.usb_bus_info.clone(),
         }
     }
 }
@@ -210,5 +220,30 @@ mod tests {
         let json = serde_json::to_value(&snap).unwrap();
         assert!(json["frameCount"].is_number());
         assert!(json["dropCount"].is_number());
+    }
+
+    #[test]
+    fn snapshot_includes_usb_bus_info() {
+        let mut stats = DiagnosticStats::new();
+        stats.set_usb_bus_info(Some("USB 3.0 Bus 2".to_string()));
+        let snap = stats.snapshot();
+        assert_eq!(snap.usb_bus_info, Some("USB 3.0 Bus 2".to_string()));
+    }
+
+    #[test]
+    fn snapshot_usb_bus_info_none_serialises_as_null() {
+        let stats = DiagnosticStats::new();
+        let snap = stats.snapshot();
+        let json = serde_json::to_value(&snap).unwrap();
+        assert!(json["usbBusInfo"].is_null());
+    }
+
+    #[test]
+    fn snapshot_usb_bus_info_serialises_to_camelcase() {
+        let mut stats = DiagnosticStats::new();
+        stats.set_usb_bus_info(Some("USB 2.0 Bus 1".to_string()));
+        let snap = stats.snapshot();
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["usbBusInfo"], "USB 2.0 Bus 1");
     }
 }

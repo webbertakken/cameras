@@ -40,6 +40,12 @@ export function DiagnosticOverlay({ snapshot }: DiagnosticOverlayProps) {
             <dd>{snapshot.latencyMs.toFixed(1)} ms</dd>
             <dt>Bandwidth</dt>
             <dd>{formatBandwidth(snapshot.bandwidthBps)}</dd>
+            {snapshot.usbBusInfo && (
+              <>
+                <dt>USB bus</dt>
+                <dd className="diagnostic-overlay__truncate">{snapshot.usbBusInfo}</dd>
+              </>
+            )}
           </dl>
         </div>
       )}

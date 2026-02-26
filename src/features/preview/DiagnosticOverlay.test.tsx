@@ -11,6 +11,7 @@ const mockSnapshot: DiagnosticSnapshot = {
   dropRate: 0.33,
   latencyMs: 12.5,
   bandwidthBps: 5_000_000,
+  usbBusInfo: null,
 }
 
 describe('DiagnosticOverlay', () => {
@@ -49,6 +50,28 @@ describe('DiagnosticOverlay', () => {
 
     const overlay = screen.getByRole('status')
     expect(overlay.className).toContain('diagnostic-overlay')
+  })
+
+  it('renders USB bus info when present', async () => {
+    const user = userEvent.setup()
+    const snapshotWithUsb: DiagnosticSnapshot = {
+      ...mockSnapshot,
+      usbBusInfo: 'USB 3.0 Bus 2',
+    }
+    render(<DiagnosticOverlay snapshot={snapshotWithUsb} />)
+
+    await user.click(screen.getByRole('button', { name: 'Stats' }))
+
+    expect(screen.getByText('USB 3.0 Bus 2')).toBeInTheDocument()
+  })
+
+  it('omits USB bus info row when null', async () => {
+    const user = userEvent.setup()
+    render(<DiagnosticOverlay snapshot={mockSnapshot} />)
+
+    await user.click(screen.getByRole('button', { name: 'Stats' }))
+
+    expect(screen.queryByText('USB bus')).not.toBeInTheDocument()
   })
 
   it('toggle button has correct aria-pressed state', async () => {
