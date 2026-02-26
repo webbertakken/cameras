@@ -10,6 +10,22 @@ const MENU_ID_QUIT: &str = "quit";
 /// Default label shown when no camera is active.
 const DEFAULT_CAMERA_LABEL: &str = "Active Camera: None";
 
+/// Show the main window and give it focus.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Hide the main window.
+fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
 /// Build and register the system tray for the application.
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let camera_label = MenuItemBuilder::with_id(MENU_ID_CAMERA_LABEL, DEFAULT_CAMERA_LABEL)
@@ -34,26 +50,19 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(move |app, event| {
             let id = event.id().as_ref();
             match id {
-                "open-panel" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
-                "quit" => {
-                    app.exit(0);
-                }
+                "open-panel" => show_main_window(app),
+                "quit" => app.exit(0),
                 _ => {}
             }
         })
         .on_tray_icon_event(|tray, event| {
             if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
                     if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
+                        hide_main_window(app);
                     } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        show_main_window(app);
                     }
                 }
             }

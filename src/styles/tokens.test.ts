@@ -5,8 +5,14 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(resolve(__dirname, 'tokens.css'), 'utf-8')
 
 describe('design tokens', () => {
-  it('defines light theme tokens on :root', () => {
+  it('defaults to dark theme on :root to prevent flash', () => {
     expect(css).toContain(':root')
+    expect(css).toMatch(/:root\s*\{[\s\S]*?--colour-bg:\s*#1c1c1e/)
+    expect(css).toMatch(/:root\s*\{[\s\S]*?--colour-text-primary:\s*#f5f5f7/)
+  })
+
+  it('defines light theme tokens under [data-theme="light"]', () => {
+    expect(css).toContain("[data-theme='light']")
     expect(css).toContain('--colour-bg: #ffffff')
     expect(css).toContain('--colour-text-primary: #1d1d1f')
     expect(css).toContain('--colour-accent: #0071e3')
@@ -20,7 +26,7 @@ describe('design tokens', () => {
   })
 
   it('has different bg values for light and dark themes', () => {
-    const lightMatch = css.match(/:root[\s\S]*?--colour-bg:\s*([^;]+);/)
+    const lightMatch = css.match(/\[data-theme='light'\][\s\S]*?--colour-bg:\s*([^;]+);/)
     const darkMatch = css.match(/\[data-theme='dark'\][\s\S]*?--colour-bg:\s*([^;]+);/)
 
     expect(lightMatch).toBeTruthy()
