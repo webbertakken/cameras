@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.0](https://github.com/webbertakken/cameras/compare/v0.2.0...v0.3.0) (2026-02-26)
+
+
+### Features
+
+* **controls:** add camera controls UI with IPC, accordion grouping, and WCAG accessibility ([#13](https://github.com/webbertakken/cameras/issues/13)) ([adb1d6d](https://github.com/webbertakken/cameras/commit/adb1d6d05a94ae077b8f07b267ea19579b46c3b9))
+* **notifications:** add toast notifications for camera hotplug events ([#21](https://github.com/webbertakken/cameras/issues/21)) ([3ab125a](https://github.com/webbertakken/cameras/commit/3ab125a0262ed7cd7fcdb1aa2eb18ab0a79d75ce))
+* **notifications:** add toast notifications for camera hotplug events ([#22](https://github.com/webbertakken/cameras/issues/22)) ([8903857](https://github.com/webbertakken/cameras/commit/89038578db1e66fa21551cdbf75d1a172194cda5))
+* **preview:** add frame capture pipeline and preview components ([#12](https://github.com/webbertakken/cameras/issues/12)) ([ec3b552](https://github.com/webbertakken/cameras/commit/ec3b552d3d6d81e7f7f42b1d43de8f8051873ad3))
+
+
+### Bug fixes
+
+* add engines field to package.json ([#16](https://github.com/webbertakken/cameras/issues/16)) ([434a0aa](https://github.com/webbertakken/cameras/commit/434a0aa9026be6d5fb964723e6bcc3f4b1321657))
+* align rustfmt edition with Cargo.toml ([#25](https://github.com/webbertakken/cameras/issues/25)) ([97ce87c](https://github.com/webbertakken/cameras/commit/97ce87c8b41db8957c245ec71c598a646dd518fb))
+* **app:** wire main panel to selected camera ([#17](https://github.com/webbertakken/cameras/issues/17)) ([f1229fa](https://github.com/webbertakken/cameras/commit/f1229fadbd12c14a97a3a42129144b590101cc8a))
+* **camera:** scope COM init to per-method calls ([#27](https://github.com/webbertakken/cameras/issues/27)) ([183ad55](https://github.com/webbertakken/cameras/commit/183ad55d8d646064ae8d27ace86bbc56a28b3b66))
+* **diagnostics:** add USB bus info to diagnostic snapshot ([#20](https://github.com/webbertakken/cameras/issues/20)) ([38ec5f4](https://github.com/webbertakken/cameras/commit/38ec5f45c93bdaf89cc6a51b973830984942f891))
+* **hooks:** add cargo clippy and lib tests to pre-commit ([#26](https://github.com/webbertakken/cameras/issues/26)) ([395c38f](https://github.com/webbertakken/cameras/commit/395c38f5a06f2a7a1ac18db04d1516c600c91a81))
+* **hotplug:** wire hotplug events end-to-end ([#18](https://github.com/webbertakken/cameras/issues/18)) ([c829187](https://github.com/webbertakken/cameras/commit/c829187be7599081dd1e3db92f6d698b0808eb7b))
+* **sidebar:** wire live thumbnails into camera entries ([#19](https://github.com/webbertakken/cameras/issues/19)) ([ac6c76d](https://github.com/webbertakken/cameras/commit/ac6c76d11ce187513e6711375b2dd92ea5cf2771))
+
+
+### Maintenance
+
+* **openspec:** add visual regression spec and tasks ([dc24719](https://github.com/webbertakken/cameras/commit/dc24719ebf6259e75eef41f5534fd01e20236aae))
+* rename project from Webcam to Cameras ([#24](https://github.com/webbertakken/cameras/issues/24)) ([439c3d1](https://github.com/webbertakken/cameras/commit/439c3d18b0d9897fa4b91ec6fd331014fa44ca31))
+
 ## [0.2.0](https://github.com/webbertakken/cameras/compare/v0.1.0...v0.2.0) (2026-02-26)
 
 
