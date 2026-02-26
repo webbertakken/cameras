@@ -188,6 +188,34 @@ impl ControlId {
     }
 }
 
+impl ControlId {
+    /// Parse a snake_case string into a ControlId.
+    ///
+    /// Returns `None` if the string does not match any known control.
+    pub fn from_str_id(s: &str) -> Option<Self> {
+        match s {
+            "pan" => Some(Self::Pan),
+            "tilt" => Some(Self::Tilt),
+            "roll" => Some(Self::Roll),
+            "zoom" => Some(Self::Zoom),
+            "exposure" => Some(Self::Exposure),
+            "iris" => Some(Self::Iris),
+            "focus" => Some(Self::Focus),
+            "brightness" => Some(Self::Brightness),
+            "contrast" => Some(Self::Contrast),
+            "hue" => Some(Self::Hue),
+            "saturation" => Some(Self::Saturation),
+            "sharpness" => Some(Self::Sharpness),
+            "gamma" => Some(Self::Gamma),
+            "color_enable" => Some(Self::ColorEnable),
+            "white_balance" => Some(Self::WhiteBalance),
+            "backlight_compensation" => Some(Self::BacklightCompensation),
+            "gain" => Some(Self::Gain),
+            _ => None,
+        }
+    }
+}
+
 /// Type of UI control widget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -555,5 +583,94 @@ mod tests {
             ControlId::BacklightCompensation.display_name(),
             "Backlight Compensation"
         );
+    }
+
+    // --- ControlId::from_str_id tests ---
+
+    #[test]
+    fn from_str_id_parses_all_camera_controls() {
+        assert_eq!(ControlId::from_str_id("pan"), Some(ControlId::Pan));
+        assert_eq!(ControlId::from_str_id("tilt"), Some(ControlId::Tilt));
+        assert_eq!(ControlId::from_str_id("roll"), Some(ControlId::Roll));
+        assert_eq!(ControlId::from_str_id("zoom"), Some(ControlId::Zoom));
+        assert_eq!(
+            ControlId::from_str_id("exposure"),
+            Some(ControlId::Exposure)
+        );
+        assert_eq!(ControlId::from_str_id("iris"), Some(ControlId::Iris));
+        assert_eq!(ControlId::from_str_id("focus"), Some(ControlId::Focus));
+    }
+
+    #[test]
+    fn from_str_id_parses_all_procamp_controls() {
+        assert_eq!(
+            ControlId::from_str_id("brightness"),
+            Some(ControlId::Brightness)
+        );
+        assert_eq!(
+            ControlId::from_str_id("contrast"),
+            Some(ControlId::Contrast)
+        );
+        assert_eq!(ControlId::from_str_id("hue"), Some(ControlId::Hue));
+        assert_eq!(
+            ControlId::from_str_id("saturation"),
+            Some(ControlId::Saturation)
+        );
+        assert_eq!(
+            ControlId::from_str_id("sharpness"),
+            Some(ControlId::Sharpness)
+        );
+        assert_eq!(ControlId::from_str_id("gamma"), Some(ControlId::Gamma));
+        assert_eq!(
+            ControlId::from_str_id("color_enable"),
+            Some(ControlId::ColorEnable)
+        );
+        assert_eq!(
+            ControlId::from_str_id("white_balance"),
+            Some(ControlId::WhiteBalance)
+        );
+        assert_eq!(
+            ControlId::from_str_id("backlight_compensation"),
+            Some(ControlId::BacklightCompensation)
+        );
+        assert_eq!(ControlId::from_str_id("gain"), Some(ControlId::Gain));
+    }
+
+    #[test]
+    fn from_str_id_returns_none_for_unknown() {
+        assert_eq!(ControlId::from_str_id("nonexistent"), None);
+        assert_eq!(ControlId::from_str_id(""), None);
+        assert_eq!(ControlId::from_str_id("Brightness"), None);
+    }
+
+    #[test]
+    fn from_str_id_roundtrips_with_as_id_str() {
+        let all_controls = [
+            ControlId::Pan,
+            ControlId::Tilt,
+            ControlId::Roll,
+            ControlId::Zoom,
+            ControlId::Exposure,
+            ControlId::Iris,
+            ControlId::Focus,
+            ControlId::Brightness,
+            ControlId::Contrast,
+            ControlId::Hue,
+            ControlId::Saturation,
+            ControlId::Sharpness,
+            ControlId::Gamma,
+            ControlId::ColorEnable,
+            ControlId::WhiteBalance,
+            ControlId::BacklightCompensation,
+            ControlId::Gain,
+        ];
+        for control in all_controls {
+            let str_id = control.as_id_str();
+            assert_eq!(
+                ControlId::from_str_id(str_id),
+                Some(control),
+                "roundtrip failed for {str_id}"
+            );
+        }
     }
 }

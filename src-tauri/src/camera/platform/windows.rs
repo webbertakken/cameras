@@ -354,6 +354,62 @@ unsafe fn find_device_filter(
     Err(CameraError::DeviceNotFound(device_path.to_string()))
 }
 
+/// All IAMCameraControl property variants (indices 0-6).
+const CAMERA_CONTROL_IDS: [ControlId; 7] = [
+    ControlId::Pan,
+    ControlId::Tilt,
+    ControlId::Roll,
+    ControlId::Zoom,
+    ControlId::Exposure,
+    ControlId::Iris,
+    ControlId::Focus,
+];
+
+/// All IAMVideoProcAmp property variants (indices 0-9).
+const PROCAMP_CONTROL_IDS: [ControlId; 10] = [
+    ControlId::Brightness,
+    ControlId::Contrast,
+    ControlId::Hue,
+    ControlId::Saturation,
+    ControlId::Sharpness,
+    ControlId::Gamma,
+    ControlId::ColorEnable,
+    ControlId::WhiteBalance,
+    ControlId::BacklightCompensation,
+    ControlId::Gain,
+];
+
+/// Map a ControlId to its IAMCameraControl property index (0-6), or None if
+/// the control belongs to IAMVideoProcAmp instead.
+fn control_id_to_camera_property(id: &ControlId) -> Option<i32> {
+    CAMERA_CONTROL_IDS
+        .iter()
+        .position(|c| c == id)
+        .map(|i| i as i32)
+}
+
+/// Map a ControlId to its IAMVideoProcAmp property index (0-9), or None if
+/// the control belongs to IAMCameraControl instead.
+fn control_id_to_procamp_property(id: &ControlId) -> Option<i32> {
+    PROCAMP_CONTROL_IDS
+        .iter()
+        .position(|c| c == id)
+        .map(|i| i as i32)
+}
+
+/// Convert DirectShow capability and current flags into `ControlFlags`.
+///
+/// DirectShow uses bitmask flags where:
+///  - bit 0 (0x1) = Auto supported / Auto enabled
+///  - bit 1 (0x2) = Manual supported / Manual enabled
+fn flags_to_control_flags(caps_flags: i32, cur_flags: i32) -> ControlFlags {
+    ControlFlags {
+        supports_auto: caps_flags & 0x1 != 0,
+        is_auto_enabled: cur_flags & 0x1 != 0,
+        is_read_only: false,
+    }
+}
+
 /// Query controls from a device via DirectShow.
 ///
 /// # Safety
@@ -364,18 +420,8 @@ unsafe fn query_device_controls(device_path: &str) -> Result<Vec<ControlDescript
 
     // Query IAMCameraControl (properties 0-6)
     if let Ok(cam_ctrl) = filter.cast::<IAMCameraControl>() {
-        for prop_index in 0..7i32 {
-            let control_id = match prop_index {
-                0 => ControlId::Pan,
-                1 => ControlId::Tilt,
-                2 => ControlId::Roll,
-                3 => ControlId::Zoom,
-                4 => ControlId::Exposure,
-                5 => ControlId::Iris,
-                6 => ControlId::Focus,
-                _ => continue,
-            };
-
+        for (index, &control_id) in CAMERA_CONTROL_IDS.iter().enumerate() {
+            let prop_index = index as i32;
             let mut min = 0i32;
             let mut max = 0i32;
             let mut step = 0i32;
@@ -413,21 +459,8 @@ unsafe fn query_device_controls(device_path: &str) -> Result<Vec<ControlDescript
 
     // Query IAMVideoProcAmp (properties 0-9)
     if let Ok(video_proc) = filter.cast::<IAMVideoProcAmp>() {
-        for prop_index in 0..10i32 {
-            let control_id = match prop_index {
-                0 => ControlId::Brightness,
-                1 => ControlId::Contrast,
-                2 => ControlId::Hue,
-                3 => ControlId::Saturation,
-                4 => ControlId::Sharpness,
-                5 => ControlId::Gamma,
-                6 => ControlId::ColorEnable,
-                7 => ControlId::WhiteBalance,
-                8 => ControlId::BacklightCompensation,
-                9 => ControlId::Gain,
-                _ => continue,
-            };
-
+        for (index, &control_id) in PROCAMP_CONTROL_IDS.iter().enumerate() {
+            let prop_index = index as i32;
             let mut min = 0i32;
             let mut max = 0i32;
             let mut step = 0i32;
@@ -507,11 +540,7 @@ fn make_control_descriptor(data: RawControlData) -> ControlDescriptor {
         step: Some(step),
         default: Some(default),
         current,
-        flags: ControlFlags {
-            supports_auto: caps_flags & 0x1 != 0,
-            is_auto_enabled: cur_flags & 0x1 != 0,
-            is_read_only: false,
-        },
+        flags: flags_to_control_flags(caps_flags, cur_flags),
         supported: true,
     }
 }
@@ -525,69 +554,45 @@ unsafe fn set_device_control(
     control: &ControlId,
     value: ControlValue,
 ) -> Result<()> {
-    let filter =
-        find_device_filter(device_path).map_err(|e| CameraError::ControlWrite(e.to_string()))?;
+    let name = control.display_name();
+    let filter = find_device_filter(device_path).map_err(|e| {
+        CameraError::ControlWrite(format!("Failed to set {name}: device not found ({e})"))
+    })?;
 
-    match control {
-        ControlId::Pan
-        | ControlId::Tilt
-        | ControlId::Roll
-        | ControlId::Zoom
-        | ControlId::Exposure
-        | ControlId::Iris
-        | ControlId::Focus => {
-            let cam_ctrl = filter.cast::<IAMCameraControl>().map_err(|e| {
-                CameraError::ControlWrite(format!("IAMCameraControl not supported: {e}"))
+    if let Some(prop_index) = control_id_to_camera_property(control) {
+        let cam_ctrl = filter.cast::<IAMCameraControl>().map_err(|e| {
+            CameraError::ControlWrite(format!(
+                "Failed to set {name}: IAMCameraControl not supported ({e})"
+            ))
+        })?;
+
+        cam_ctrl
+            .Set(prop_index, value.value(), 2) // 2 = manual mode
+            .map_err(|e| {
+                CameraError::ControlWrite(format!(
+                    "Failed to set {name} to {}: {e}",
+                    value.value()
+                ))
             })?;
+    } else if let Some(prop_index) = control_id_to_procamp_property(control) {
+        let video_proc = filter.cast::<IAMVideoProcAmp>().map_err(|e| {
+            CameraError::ControlWrite(format!(
+                "Failed to set {name}: IAMVideoProcAmp not supported ({e})"
+            ))
+        })?;
 
-            let prop_index = match control {
-                ControlId::Pan => 0,
-                ControlId::Tilt => 1,
-                ControlId::Roll => 2,
-                ControlId::Zoom => 3,
-                ControlId::Exposure => 4,
-                ControlId::Iris => 5,
-                ControlId::Focus => 6,
-                _ => unreachable!(),
-            };
-
-            cam_ctrl
-                .Set(
-                    prop_index,
-                    value.value(),
-                    2, // manual mode
-                )
-                .map_err(|e| {
-                    CameraError::ControlWrite(format!("CameraControl::Set failed: {e}"))
-                })?;
-        }
-        _ => {
-            let video_proc = filter.cast::<IAMVideoProcAmp>().map_err(|e| {
-                CameraError::ControlWrite(format!("IAMVideoProcAmp not supported: {e}"))
+        video_proc
+            .Set(prop_index, value.value(), 2) // 2 = manual mode
+            .map_err(|e| {
+                CameraError::ControlWrite(format!(
+                    "Failed to set {name} to {}: {e}",
+                    value.value()
+                ))
             })?;
-
-            let prop_index = match control {
-                ControlId::Brightness => 0,
-                ControlId::Contrast => 1,
-                ControlId::Hue => 2,
-                ControlId::Saturation => 3,
-                ControlId::Sharpness => 4,
-                ControlId::Gamma => 5,
-                ControlId::ColorEnable => 6,
-                ControlId::WhiteBalance => 7,
-                ControlId::BacklightCompensation => 8,
-                ControlId::Gain => 9,
-                _ => unreachable!(),
-            };
-
-            video_proc
-                .Set(
-                    prop_index,
-                    value.value(),
-                    2, // manual mode
-                )
-                .map_err(|e| CameraError::ControlWrite(format!("VideoProcAmp::Set failed: {e}")))?;
-        }
+    } else {
+        return Err(CameraError::ControlWrite(format!(
+            "Unknown control: {name}"
+        )));
     }
 
     Ok(())
@@ -992,6 +997,173 @@ mod tests {
     fn watch_hotplug_accepts_send_callback() {
         let _callback: Box<dyn Fn(HotplugEvent) + Send> = Box::new(|_| {});
         assert!(true);
+    }
+
+    // --- control_id_to_camera_property tests ---
+
+    #[test]
+    fn camera_property_maps_pan_to_0() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Pan), Some(0));
+    }
+
+    #[test]
+    fn camera_property_maps_tilt_to_1() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Tilt), Some(1));
+    }
+
+    #[test]
+    fn camera_property_maps_roll_to_2() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Roll), Some(2));
+    }
+
+    #[test]
+    fn camera_property_maps_zoom_to_3() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Zoom), Some(3));
+    }
+
+    #[test]
+    fn camera_property_maps_exposure_to_4() {
+        assert_eq!(
+            control_id_to_camera_property(&ControlId::Exposure),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn camera_property_maps_iris_to_5() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Iris), Some(5));
+    }
+
+    #[test]
+    fn camera_property_maps_focus_to_6() {
+        assert_eq!(control_id_to_camera_property(&ControlId::Focus), Some(6));
+    }
+
+    #[test]
+    fn camera_property_returns_none_for_procamp_controls() {
+        assert_eq!(
+            control_id_to_camera_property(&ControlId::Brightness),
+            None
+        );
+        assert_eq!(control_id_to_camera_property(&ControlId::Contrast), None);
+        assert_eq!(control_id_to_camera_property(&ControlId::Gain), None);
+        assert_eq!(
+            control_id_to_camera_property(&ControlId::WhiteBalance),
+            None
+        );
+    }
+
+    // --- control_id_to_procamp_property tests ---
+
+    #[test]
+    fn procamp_property_maps_brightness_to_0() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::Brightness),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_contrast_to_1() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::Contrast),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_hue_to_2() {
+        assert_eq!(control_id_to_procamp_property(&ControlId::Hue), Some(2));
+    }
+
+    #[test]
+    fn procamp_property_maps_saturation_to_3() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::Saturation),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_sharpness_to_4() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::Sharpness),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_gamma_to_5() {
+        assert_eq!(control_id_to_procamp_property(&ControlId::Gamma), Some(5));
+    }
+
+    #[test]
+    fn procamp_property_maps_color_enable_to_6() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::ColorEnable),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_white_balance_to_7() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::WhiteBalance),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_backlight_compensation_to_8() {
+        assert_eq!(
+            control_id_to_procamp_property(&ControlId::BacklightCompensation),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn procamp_property_maps_gain_to_9() {
+        assert_eq!(control_id_to_procamp_property(&ControlId::Gain), Some(9));
+    }
+
+    #[test]
+    fn procamp_property_returns_none_for_camera_controls() {
+        assert_eq!(control_id_to_procamp_property(&ControlId::Pan), None);
+        assert_eq!(control_id_to_procamp_property(&ControlId::Tilt), None);
+        assert_eq!(control_id_to_procamp_property(&ControlId::Focus), None);
+        assert_eq!(control_id_to_procamp_property(&ControlId::Exposure), None);
+    }
+
+    // --- flags_to_control_flags tests ---
+
+    #[test]
+    fn flags_auto_supported_and_enabled() {
+        let flags = flags_to_control_flags(0x01, 0x01);
+        assert!(flags.supports_auto);
+        assert!(flags.is_auto_enabled);
+        assert!(!flags.is_read_only);
+    }
+
+    #[test]
+    fn flags_auto_supported_but_manual_active() {
+        let flags = flags_to_control_flags(0x03, 0x02);
+        assert!(flags.supports_auto);
+        assert!(!flags.is_auto_enabled);
+    }
+
+    #[test]
+    fn flags_manual_only() {
+        let flags = flags_to_control_flags(0x02, 0x02);
+        assert!(!flags.supports_auto);
+        assert!(!flags.is_auto_enabled);
+    }
+
+    #[test]
+    fn flags_zero_means_no_auto() {
+        let flags = flags_to_control_flags(0x00, 0x00);
+        assert!(!flags.supports_auto);
+        assert!(!flags.is_auto_enabled);
+        assert!(!flags.is_read_only);
     }
 
     #[test]
