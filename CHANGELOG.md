@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/webbertakken/cameras/compare/v0.3.0...v0.3.1) (2026-02-26)
+
+
+### Bug fixes
+
+* **build:** fix macOS build and bundle identifier ([#28](https://github.com/webbertakken/cameras/issues/28)) ([#29](https://github.com/webbertakken/cameras/issues/29)) ([75d7846](https://github.com/webbertakken/cameras/commit/75d78469a958c4c8a200b2a17e8b27781913400c))
+
 ## [0.3.0](https://github.com/webbertakken/cameras/compare/v0.2.0...v0.3.0) (2026-02-26)
 
 
