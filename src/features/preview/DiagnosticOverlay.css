@@ -1,0 +1,54 @@
+.diagnostic-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.75);
+  border-radius: var(--radius-sm, 4px);
+  color: #eee;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.diagnostic-overlay__grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.diagnostic-overlay__grid dt {
+  color: #aaa;
+  font-weight: normal;
+}
+
+.diagnostic-overlay__grid dd {
+  margin: 0;
+  text-align: right;
+}
+
+.diagnostic-overlay__toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 11;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm, 4px);
+  background: rgba(0, 0, 0, 0.5);
+  color: #ddd;
+  cursor: pointer;
+}
+
+.diagnostic-overlay__toggle:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.diagnostic-overlay__toggle[aria-pressed='true'] {
+  background: rgba(60, 120, 200, 0.6);
+  border-color: rgba(60, 120, 200, 0.8);
+}

@@ -1,15 +1,20 @@
 #[allow(dead_code)]
 mod camera;
+#[allow(dead_code)]
+mod diagnostics;
 mod input;
 mod integration;
 mod pipeline;
 mod preset;
+#[allow(dead_code)]
+mod preview;
 mod tray;
 
 use camera::commands::{
     get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
     set_camera_control, CameraState,
 };
+use preview::commands::{get_frame, get_thumbnail, start_preview, stop_preview, PreviewState};
 
 /// Create the camera backend for the current platform.
 fn create_camera_state() -> CameraState {
@@ -95,12 +100,17 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .manage(create_camera_state())
+        .manage(PreviewState::new())
         .invoke_handler(tauri::generate_handler![
             list_cameras,
             get_camera_controls,
             get_camera_formats,
             set_camera_control,
             reset_camera_control,
+            start_preview,
+            stop_preview,
+            get_frame,
+            get_thumbnail,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
