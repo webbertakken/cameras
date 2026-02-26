@@ -33,9 +33,9 @@ The virtual camera SHALL output at the same resolution and frame rate as the sou
 
 ### Requirement: Virtual camera naming
 
-The virtual camera device SHALL be named in a way that is recognisable to users in other applications (e.g. "Webcam Settings Manager - [Camera Name]").
+The virtual camera device SHALL be named in a way that is recognisable to users in other applications (e.g. "Cameras - [Camera Name]").
 
 #### Scenario: Virtual camera name in app picker
 
 - **WHEN** a user opens Zoom's camera selection
-- **THEN** the virtual camera appears with a descriptive name like "Webcam Settings Manager - Logitech Brio"
+- **THEN** the virtual camera appears with a descriptive name like "Cameras - Logitech Brio"

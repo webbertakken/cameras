@@ -465,6 +465,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "cameras"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "fast_image_resize",
+ "image",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-fs",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tauri-plugin-single-instance",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "camino"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4850,30 +4874,6 @@ checksum = "705eceb4ce901230f8625bd1d665128056ccbe4b7408faa625eec1ba80f59a97"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "webcam-settings"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "fast_image_resize",
- "image",
- "log",
- "parking_lot",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-fs",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tauri-plugin-single-instance",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "windows 0.62.2",
 ]
 
 [[package]]

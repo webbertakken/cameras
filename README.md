@@ -1,6 +1,6 @@
-# Webcam Settings
+# Cameras
 
-Desktop app for managing webcam settings — brightness, contrast, white balance and more — with a live preview.
+Desktop app for managing camera settings — brightness, contrast, white balance and more — with a live preview.
 
 ## Features
 

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    webcam_settings_lib::run();
+    cameras_lib::run();
 }

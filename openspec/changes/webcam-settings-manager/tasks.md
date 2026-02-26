@@ -185,7 +185,7 @@
 - [ ] 18.3 Wire virtual camera to receive processed frames from the full pipeline (colour + overlays)
 - [ ] 18.4 Expose Tauri IPC commands: `start_virtual_camera`, `stop_virtual_camera`, `get_virtual_camera_status`
 - [ ] 18.5 Create virtual camera toggle in the UI with status indicator
-- [ ] 18.6 Set virtual camera device name to "Webcam Settings Manager - [Camera Name]"
+- [ ] 18.6 Set virtual camera device name to "Cameras - [Camera Name]"
 
 ---
 
