@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
+import { ToastContainer } from './features/notifications'
 import { PreviewCanvas } from './features/preview/PreviewCanvas'
 import { usePreview } from './features/preview/usePreview'
 import './App.css'
@@ -36,6 +37,7 @@ function App() {
           </div>
         )}
       </main>
+      <ToastContainer />
     </div>
   )
 }
