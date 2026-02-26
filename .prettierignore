@@ -3,4 +3,6 @@ node_modules
 src-tauri/target
 src-tauri/gen
 .yarn
+.husky/_
+.claude
 yarn.lock
