@@ -13,27 +13,19 @@
     "global-shortcut:allow-is-registered",
     {
       "identifier": "fs:allow-read",
-      "allow": [
-        { "path": "$APPDATA/presets/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/presets/**" }]
     },
     {
       "identifier": "fs:allow-write",
-      "allow": [
-        { "path": "$APPDATA/presets/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/presets/**" }]
     },
     {
       "identifier": "fs:allow-exists",
-      "allow": [
-        { "path": "$APPDATA/presets/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/presets/**" }]
     },
     {
       "identifier": "fs:allow-mkdir",
-      "allow": [
-        { "path": "$APPDATA/presets/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/presets/**" }]
     }
   ]
 }
