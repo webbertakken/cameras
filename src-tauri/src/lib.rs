@@ -6,7 +6,10 @@ mod pipeline;
 mod preset;
 mod tray;
 
-use camera::commands::{get_camera_controls, get_camera_formats, list_cameras, CameraState};
+use camera::commands::{
+    get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
+    set_camera_control, CameraState,
+};
 
 /// Create the camera backend for the current platform.
 fn create_camera_state() -> CameraState {
@@ -96,6 +99,8 @@ pub fn run() {
             list_cameras,
             get_camera_controls,
             get_camera_formats,
+            set_camera_control,
+            reset_camera_control,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
