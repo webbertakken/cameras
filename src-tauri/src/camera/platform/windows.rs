@@ -2,16 +2,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tracing::{debug, error, info, warn};
-use windows::core::{Interface, GUID};
 use windows::Win32::Media::DirectShow::{IAMCameraControl, IAMVideoProcAmp};
 use windows::Win32::Media::MediaFoundation::{
     CLSID_SystemDeviceEnum, CLSID_VideoInputDeviceCategory,
 };
 use windows::Win32::System::Com::StructuredStorage::IPropertyBag;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoCreateInstance,
+    CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::System::Variant::VARIANT;
+use windows::core::{GUID, Interface};
 
 use crate::camera::backend::CameraBackend;
 use crate::camera::error::{CameraError, Result};
@@ -44,6 +45,7 @@ impl DirectShowEnumerator {
 
 impl DeviceEnumerator for DirectShowEnumerator {
     fn enumerate_raw(&self) -> Result<Vec<RawDeviceInfo>> {
+        let _guard = ComGuard::init_mta()?;
         unsafe { enumerate_directshow_devices() }
     }
 }
@@ -150,12 +152,28 @@ unsafe fn read_property_string(bag: &IPropertyBag, name: &str) -> Option<String>
 struct ComGuard;
 
 impl ComGuard {
-    fn init() -> Result<Self> {
+    /// Initialise COM in multi-threaded apartment mode (MTA).
+    /// Use for DirectShow enumeration and control operations.
+    fn init_mta() -> Result<Self> {
         unsafe {
             let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
             if hr.is_err() {
                 return Err(CameraError::ComInit(format!(
-                    "CoInitializeEx failed: {hr:?}"
+                    "CoInitializeEx(MTA) failed: {hr:?}"
+                )));
+            }
+        }
+        Ok(Self)
+    }
+
+    /// Initialise COM in single-threaded apartment mode (STA).
+    /// Use for message-pump loops (e.g. hotplug detection).
+    fn init_sta() -> Result<Self> {
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if hr.is_err() {
+                return Err(CameraError::ComInit(format!(
+                    "CoInitializeEx(STA) failed: {hr:?}"
                 )));
             }
         }
@@ -181,14 +199,15 @@ pub struct WindowsBackend {
 impl WindowsBackend {
     /// Create a new backend with the real DirectShow
     /// enumerator.
-    pub fn new() -> Result<Self> {
-        let _guard = ComGuard::init()?;
-        std::mem::forget(_guard);
-
-        Ok(Self {
+    ///
+    /// Does not initialise COM — each method creates a scoped
+    /// COM guard to avoid polluting the calling thread's
+    /// apartment.
+    pub fn new() -> Self {
+        Self {
             enumerator: Box::new(DirectShowEnumerator::new()),
             known_devices: Arc::new(Mutex::new(HashMap::new())),
-        })
+        }
     }
 
     /// Create a backend with a custom enumerator (for
@@ -415,6 +434,7 @@ fn flags_to_control_flags(caps_flags: i32, cur_flags: i32) -> ControlFlags {
 /// # Safety
 /// Calls COM APIs.
 unsafe fn query_device_controls(device_path: &str) -> Result<Vec<ControlDescriptor>> {
+    let _guard = ComGuard::init_mta()?;
     let filter = find_device_filter(device_path)?;
     let mut controls = Vec::new();
 
@@ -554,6 +574,7 @@ unsafe fn set_device_control(
     control: &ControlId,
     value: ControlValue,
 ) -> Result<()> {
+    let _guard = ComGuard::init_mta()?;
     let name = control.display_name();
     let filter = find_device_filter(device_path).map_err(|e| {
         CameraError::ControlWrite(format!("Failed to set {name}: device not found ({e})"))
@@ -597,6 +618,7 @@ unsafe fn set_device_control(
 /// # Safety
 /// Calls COM APIs.
 unsafe fn query_device_formats(device_path: &str) -> Result<Vec<FormatDescriptor>> {
+    let _guard = ComGuard::init_mta()?;
     use windows::Win32::Media::DirectShow::IAMStreamConfig;
     use windows::Win32::Media::MediaFoundation::{FORMAT_VideoInfo, VIDEOINFOHEADER};
 
@@ -715,14 +737,13 @@ fn run_hotplug_loop(
     _callback: Box<dyn Fn(HotplugEvent) + Send>,
 ) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
-        RegisterDeviceNotificationW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-        DEV_BROADCAST_DEVICEINTERFACE_W, HWND_MESSAGE, MSG, REGISTER_NOTIFICATION_FLAGS,
-        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DEV_BROADCAST_DEVICEINTERFACE_W, DispatchMessageW,
+        GetMessageW, HWND_MESSAGE, MSG, REGISTER_NOTIFICATION_FLAGS, RegisterClassW,
+        RegisterDeviceNotificationW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
     };
 
     unsafe {
-        let _guard = ComGuard::init()?;
+        let _guard = ComGuard::init_sta()?;
 
         let class_name = windows::core::w!("CameraHotplugWnd");
         let wc = WNDCLASSW {
@@ -820,6 +841,40 @@ mod tests {
         fn enumerate_raw(&self) -> Result<Vec<RawDeviceInfo>> {
             Ok(self.devices.clone())
         }
+    }
+
+    #[test]
+    fn windows_backend_new_does_not_init_com() {
+        // Constructor is infallible and does not touch COM
+        let _backend =
+            WindowsBackend::with_enumerator(Box::new(MockEnumerator { devices: vec![] }));
+    }
+
+    #[test]
+    fn com_guard_supports_mta_mode() {
+        let guard = ComGuard::init_mta();
+        assert!(guard.is_ok(), "MTA init should succeed");
+        // Guard drops here, calling CoUninitialize
+    }
+
+    #[test]
+    fn com_guard_supports_sta_mode() {
+        let guard = ComGuard::init_sta();
+        assert!(guard.is_ok(), "STA init should succeed");
+    }
+
+    #[test]
+    fn enumerate_devices_works_with_mock_enumerator() {
+        let backend = WindowsBackend::with_enumerator(Box::new(MockEnumerator {
+            devices: vec![RawDeviceInfo {
+                friendly_name: "Mock Camera".to_string(),
+                device_path: "mock-path".to_string(),
+            }],
+        }));
+
+        let devices = backend.enumerate_devices().unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "Mock Camera");
     }
 
     #[test]

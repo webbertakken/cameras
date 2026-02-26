@@ -11,27 +11,18 @@ mod preview;
 mod tray;
 
 use camera::commands::{
-    get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
-    set_camera_control, CameraState,
+    CameraState, get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
+    set_camera_control,
 };
-use preview::commands::{get_frame, get_thumbnail, start_preview, stop_preview, PreviewState};
+use preview::commands::{PreviewState, get_frame, get_thumbnail, start_preview, stop_preview};
 
 /// Create the camera backend for the current platform.
 fn create_camera_state() -> CameraState {
     #[cfg(target_os = "windows")]
     {
         use camera::platform::WindowsBackend;
-        match WindowsBackend::new() {
-            Ok(backend) => CameraState {
-                backend: Box::new(backend),
-            },
-            Err(e) => {
-                tracing::error!("Failed to create Windows camera backend: {e}");
-                // Fallback: empty mock that returns no devices
-                CameraState {
-                    backend: Box::new(NullBackend),
-                }
-            }
+        CameraState {
+            backend: Box::new(WindowsBackend::new()),
         }
     }
 
@@ -43,9 +34,11 @@ fn create_camera_state() -> CameraState {
     }
 }
 
-/// No-op backend used when the real backend fails to initialise.
+/// No-op backend for non-Windows platforms.
+#[cfg(not(target_os = "windows"))]
 struct NullBackend;
 
+#[cfg(not(target_os = "windows"))]
 impl camera::backend::CameraBackend for NullBackend {
     fn enumerate_devices(&self) -> camera::error::Result<Vec<camera::types::CameraDevice>> {
         Ok(vec![])
