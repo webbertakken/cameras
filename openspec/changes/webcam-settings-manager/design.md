@@ -9,6 +9,7 @@ Key constraint: Camera hardware access (UVC controls, device enumeration, video 
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Camera discovery and sidebar with live thumbnails as the primary UX (first-class feature)
 - Dynamic UI that adapts to each camera's actual capabilities — no hardcoded control sets
 - Real-time preview with < 100ms latency from camera to screen
@@ -22,6 +23,7 @@ Key constraint: Camera hardware access (UVC controls, device enumeration, video 
 - Full WCAG 2.2 AA accessibility compliance
 
 **Non-Goals:**
+
 - Per-app camera profiles (auto-switch based on foreground app) — deferred
 - Audio/microphone controls — out of scope
 - Recording or streaming capabilities — this is a control app, not a capture app
@@ -89,12 +91,14 @@ trait CameraBackend {
 **Rationale:** This allows the frontend and core logic to be platform-agnostic. The trait is implemented by `WindowsBackend` (DirectShow/Media Foundation), `MacosBackend` (AVFoundation), and `LinuxBackend` (V4L2). The correct implementation is selected at compile time via `cfg(target_os)`.
 
 **Alternatives considered:**
+
 - Using a cross-platform library like `nokhwa`: Considered, but it doesn't expose the full range of UVC controls needed (pan/tilt, powerline freq, etc.) and limits our ability to handle non-standard cameras like GoPro/Canon.
 - Abstracting at a higher level (per-feature, not per-operation): Too coarse — we need fine-grained control over individual UVC properties.
 
 ### Decision 3: Frame delivery via shared memory + events
 
 Camera frames are captured in Rust and delivered to the React frontend via:
+
 1. **Rust captures frames** into a shared buffer (ring buffer)
 2. **Tauri event** notifies the frontend that a new frame is ready
 3. **Frontend reads the frame** via a Tauri command that returns the frame data (or a reference to shared memory)
@@ -103,6 +107,7 @@ Camera frames are captured in Rust and delivered to the React frontend via:
 For sidebar thumbnails, frames are downscaled in Rust before delivery (e.g. 160x120) to reduce IPC overhead.
 
 **Rationale:** Direct IPC of full frames at 30fps 1080p (~6MB/frame uncompressed) is too expensive. Options:
+
 - **SharedArrayBuffer** (not available in Tauri webview)
 - **Base64-encoded frames via events**: High overhead from encoding. Acceptable for thumbnails, not main preview.
 - **Write frames to a local file/pipe and read from frontend**: Complex, fragile.
@@ -116,21 +121,21 @@ Camera controls are described by a `ControlDescriptor` struct sent from Rust to 
 
 ```typescript
 interface ControlDescriptor {
-  id: string;                    // e.g. "brightness", "white_balance_temperature"
-  name: string;                  // Human-readable display name
-  type: 'slider' | 'toggle' | 'select' | 'button';
-  group: string;                 // Accordion section: "image", "exposure", "focus", "advanced"
-  min?: number;
-  max?: number;
-  step?: number;
-  default?: number;
-  current: number;
+  id: string // e.g. "brightness", "white_balance_temperature"
+  name: string // Human-readable display name
+  type: 'slider' | 'toggle' | 'select' | 'button'
+  group: string // Accordion section: "image", "exposure", "focus", "advanced"
+  min?: number
+  max?: number
+  step?: number
+  default?: number
+  current: number
   flags: {
-    supportsAuto: boolean;
-    isAutoEnabled: boolean;
-    isReadOnly: boolean;
-  };
-  options?: { value: number; label: string }[];  // For 'select' type
+    supportsAuto: boolean
+    isAutoEnabled: boolean
+    isReadOnly: boolean
+  }
+  options?: { value: number; label: string }[] // For 'select' type
 }
 ```
 
@@ -154,6 +159,7 @@ The colour grading pipeline (temperature, tint, RGB, LUT) runs as a GPU compute 
 ### Decision 6: Virtual camera via platform-specific drivers
 
 Virtual camera output requires OS-level driver integration:
+
 - **Windows:** Use the OBS Virtual Camera SDK or implement a DirectShow source filter
 - **macOS:** Use a CoreMediaIO DAL plugin (similar to OBS Virtual Camera)
 - **Linux:** Use v4l2loopback kernel module
@@ -165,6 +171,7 @@ The app writes processed frames to the virtual device. This is the most complex 
 ### Decision 7: Presets stored as JSON in app data directory
 
 Presets are stored as JSON files in the OS-appropriate app data directory:
+
 - Windows: `%APPDATA%/webcam-settings-manager/presets/`
 - macOS: `~/Library/Application Support/webcam-settings-manager/presets/`
 - Linux: `~/.config/webcam-settings-manager/presets/`
@@ -206,6 +213,7 @@ Overlay definitions are stored as JSON alongside camera settings. The overlay en
 ### Decision 11: Diagnostic stats collection
 
 The Rust backend collects real-time diagnostic stats per camera:
+
 - Actual frame rate (measured)
 - Frame drop count and rate
 - Capture-to-display latency
@@ -256,10 +264,12 @@ The project uses a 6-workflow GitHub Actions setup, adapted from the proven patt
 **Release flow:** Push to main → release-please creates/updates a release PR with changelog → merge release PR → release-please creates a version tag → tag triggers release.yml → Tauri action builds all 5 platform targets → artifacts uploaded to GitHub Release with auto-updater manifest.
 
 **Configuration files:**
+
 - `release-please-config.json` — Release type configuration for Rust + Node.js dual versioning
 - `.release-please-manifest.json` — Tracks current version for release-please
 
 **Required secrets:**
+
 - `RELEASE_TOKEN` — GitHub PAT for release-please (allows tag creation to trigger release workflow)
 - `TAURI_SIGNING_PRIVATE_KEY` — For Tauri auto-updater signature verification
 - Code signing secrets added in Phase 5: Apple notarisation (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) and Windows Authenticode (`WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`)
@@ -267,6 +277,7 @@ The project uses a 6-workflow GitHub Actions setup, adapted from the proven patt
 **Rationale:** This pattern is proven in production on webbertakken/snap. The key adaptation is replacing `cargo-dist` (used by snap for pure-Rust builds) with `tauri-apps/tauri-action` (which understands Tauri's frontend build step and platform-specific bundling). Release-please provides fully automated version management and changelogs from conventional commits, removing manual release coordination.
 
 **Alternatives considered:**
+
 - **cargo-dist:** Used by snap, but designed for pure-Rust binaries. Does not understand Tauri's frontend build or platform-specific bundlers (NSIS, DMG, AppImage). Would require extensive custom scripting.
 - **Manual release process:** Error-prone, doesn't scale across 5 platform targets, and misses auto-updater manifest generation.
 - **Single monolithic CI workflow:** Harder to maintain, slower feedback (quality checks blocked by full cross-platform builds), and poor separation of concerns.
@@ -280,6 +291,7 @@ The settings UI is split into two distinct tiers:
 2. **Additional settings / software processing** (opt-in, CPU/GPU cost) — colour grading, LUT application, digital zoom, overlays. These require the app's processing pipeline (wgpu compute shaders or CPU fallback) to be active. They are behind an explicit "Additional settings" toggle that the user must enable.
 
 **UI layout order:**
+
 ```
 [Camera sidebar] | [Preview] | [Settings panel]
                                 ├── Native controls (accordion sections)
