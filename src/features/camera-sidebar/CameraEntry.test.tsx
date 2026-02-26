@@ -43,4 +43,60 @@ describe('CameraEntry', () => {
     screen.getByRole('option').click()
     expect(onSelect).toHaveBeenCalledWith('cam-1')
   })
+
+  it('renders thumbnail image when thumbnailSrc is provided', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        thumbnailSrc="data:image/jpeg;base64,abc"
+      />,
+    )
+    const img = screen.getByRole('img')
+    expect(img).toHaveAttribute('src', 'data:image/jpeg;base64,abc')
+  })
+
+  it('renders SVG placeholder when thumbnailSrc is null', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        thumbnailSrc={null}
+      />,
+    )
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.getByTestId('camera-thumbnail').querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('renders SVG placeholder when thumbnailSrc is omitted', () => {
+    render(<CameraEntry device={device} isSelected={false} onSelect={vi.fn()} />)
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.getByTestId('camera-thumbnail').querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('thumbnail image has correct alt text for accessibility', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        thumbnailSrc="data:image/jpeg;base64,abc"
+      />,
+    )
+    expect(screen.getByRole('img')).toHaveAttribute('alt', 'Logitech C920 preview')
+  })
+
+  it('hides SVG icon when thumbnail image is shown', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        thumbnailSrc="data:image/jpeg;base64,abc"
+      />,
+    )
+    expect(screen.getByTestId('camera-thumbnail').querySelector('svg')).not.toBeInTheDocument()
+  })
 })

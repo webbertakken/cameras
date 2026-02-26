@@ -38,6 +38,13 @@
   color: var(--colour-text-secondary);
 }
 
+.camera-entry__thumbnail-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
 .camera-entry__icon {
   width: 24px;
   height: 24px;
