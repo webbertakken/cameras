@@ -2,91 +2,91 @@
 
 ## 1. Project scaffold
 
-- [ ] 1.1 Initialise Tauri v2 project with React + TypeScript frontend (Vite)
-- [ ] 1.2 Configure Volta for Node/Yarn versions, add `.npmrc` and engine constraints
-- [ ] 1.3 Set up ESLint, Prettier, and Rust clippy/rustfmt configurations
-- [ ] 1.4 Add pre-commit hooks (lint, format, typecheck) via Husky + lint-staged
-- [ ] 1.5 Set up CI workflows (GitHub Actions) — modelled on webbertakken/snap:
-  - [ ] 1.5.1 Create `checks.yml` — runs on push to main + PRs: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo check`, `cargo test`, `yarn lint`, `yarn typecheck`, `yarn test`
-  - [ ] 1.5.2 Create `build.yml` — cross-platform build matrix (5 targets: Windows x64, Linux x64, Linux ARM, macOS ARM, macOS Intel) using `tauri build`. Steps: checkout, `dtolnay/rust-toolchain@stable`, `actions/setup-node` (Volta-pinned), `swatinem/rust-cache@v2`, install platform deps (Linux: libwebkit2gtk-4.1-dev, libjavascriptcoregtk-4.1-dev, libsoup-3.0-dev, libayatana-appindicator3-dev, libxcb, libgtk-3-dev, etc.), `yarn install`, `yarn tauri build`
-  - [ ] 1.5.3 Create `commit-lint.yml` — validate PR titles using `amannn/action-semantic-pull-request@v5` with conventional commit types (feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert)
-  - [ ] 1.5.4 Create `lint-workflows.yml` — validate workflow files on PRs touching `.github/workflows/**` using `reviewdog/action-actionlint@v1`
-  - [ ] 1.5.5 Create `release-please.yml` — automated release PRs using `googleapis/release-please-action@v4` with config for both Cargo.toml and package.json version bumping, conventional commit changelog generation, `RELEASE_TOKEN` secret
-  - [ ] 1.5.6 Create `release.yml` — build + publish releases using `tauri-apps/tauri-action@v0` triggered on version tags. Builds NSIS/MSI (Windows), DMG (macOS), AppImage/deb (Linux). Generates Tauri auto-updater JSON manifest. Uploads all artifacts to GitHub Release.
-  - [ ] 1.5.7 Add `release-please-config.json` and `.release-please-manifest.json` to repo root
-  - [ ] 1.5.8 Document required repository secrets: `RELEASE_TOKEN`, `TAURI_SIGNING_PRIVATE_KEY` (auto-updater), and placeholder notes for future code signing (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`)
-- [ ] 1.6 Create domain-driven directory structure in `src-tauri/src/` (camera, preview, presets, colour, overlays, virtual_cam, integrations, hotkeys, diagnostics, rtsp, settings)
-- [ ] 1.7 Create domain-driven directory structure in `src/features/` (camera-sidebar, preview, controls, presets, colour-grading, overlays, settings, widget)
-- [ ] 1.8 Add Tauri v2 permissions for system tray, window management, and IPC commands
+- [x] 1.1 Initialise Tauri v2 project with React + TypeScript frontend (Vite)
+- [x] 1.2 Configure Volta for Node/Yarn versions, add `.npmrc` and engine constraints
+- [x] 1.3 Set up ESLint, Prettier, and Rust clippy/rustfmt configurations
+- [x] 1.4 Add pre-commit hooks (lint, format, typecheck) via Husky + lint-staged
+- [x] 1.5 Set up CI workflows (GitHub Actions) — modelled on webbertakken/snap:
+  - [x] 1.5.1 Create `checks.yml` — runs on push to main + PRs: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo check`, `cargo test`, `yarn lint`, `yarn typecheck`, `yarn test`
+  - [x] 1.5.2 Create `build.yml` — cross-platform build matrix (5 targets: Windows x64, Linux x64, Linux ARM, macOS ARM, macOS Intel) using `tauri build`. Steps: checkout, `dtolnay/rust-toolchain@stable`, `actions/setup-node` (Volta-pinned), `swatinem/rust-cache@v2`, install platform deps (Linux: libwebkit2gtk-4.1-dev, libjavascriptcoregtk-4.1-dev, libsoup-3.0-dev, libayatana-appindicator3-dev, libxcb, libgtk-3-dev, etc.), `yarn install`, `yarn tauri build`
+  - [x] 1.5.3 Create `commit-lint.yml` — validate PR titles using `amannn/action-semantic-pull-request@v5` with conventional commit types (feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert)
+  - [x] 1.5.4 Create `lint-workflows.yml` — validate workflow files on PRs touching `.github/workflows/**` using `reviewdog/action-actionlint@v1`
+  - [x] 1.5.5 Create `release-please.yml` — automated release PRs using `googleapis/release-please-action@v4` with config for both Cargo.toml and package.json version bumping, conventional commit changelog generation, `RELEASE_TOKEN` secret
+  - [x] 1.5.6 Create `release.yml` — build + publish releases using `tauri-apps/tauri-action@v0` triggered on version tags. Builds NSIS/MSI (Windows), DMG (macOS), AppImage/deb (Linux). Generates Tauri auto-updater JSON manifest. Uploads all artifacts to GitHub Release.
+  - [x] 1.5.7 Add `release-please-config.json` and `.release-please-manifest.json` to repo root
+  - [x] 1.5.8 Document required repository secrets: `RELEASE_TOKEN`, `TAURI_SIGNING_PRIVATE_KEY` (auto-updater), and placeholder notes for future code signing (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`)
+- [x] 1.6 Create domain-driven directory structure in `src-tauri/src/` (camera, preview, presets, colour, overlays, virtual_cam, integrations, hotkeys, diagnostics, rtsp, settings)
+- [x] 1.7 Create domain-driven directory structure in `src/features/` (camera-sidebar, preview, controls, presets, colour-grading, overlays, settings, widget)
+- [x] 1.8 Add Tauri v2 permissions for system tray, window management, and IPC commands
 
 ## 2. Camera discovery — Rust backend
 
-- [ ] 2.1 Define `CameraBackend` trait with `enumerate_devices`, `watch_hotplug`, `open_device`, `get_controls`, `get_control`, `set_control`, `get_formats`, `start_capture`
-- [ ] 2.2 Define core types: `CameraDevice`, `DeviceId`, `CameraHandle`, `ControlDescriptor`, `ControlValue`, `ControlId`, `FormatDescriptor`, `HotplugEvent`
-- [ ] 2.3 Implement `WindowsBackend` for camera device enumeration using DirectShow/Media Foundation
-- [ ] 2.4 Implement hot-plug detection on Windows (device notification listener)
-- [ ] 2.5 Implement camera capability enumeration — query supported UVC controls with min/max/step/default for each
-- [ ] 2.6 Implement camera identification persistence — generate stable identifiers from VID:PID + serial number
-- [ ] 2.7 Expose Tauri IPC commands: `list_cameras`, `watch_cameras`, `get_camera_controls`, `get_camera_formats`
+- [x] 2.1 Define `CameraBackend` trait with `enumerate_devices`, `watch_hotplug`, `open_device`, `get_controls`, `get_control`, `set_control`, `get_formats`, `start_capture`
+- [x] 2.2 Define core types: `CameraDevice`, `DeviceId`, `CameraHandle`, `ControlDescriptor`, `ControlValue`, `ControlId`, `FormatDescriptor`, `HotplugEvent`
+- [x] 2.3 Implement `WindowsBackend` for camera device enumeration using DirectShow/Media Foundation
+- [x] 2.4 Implement hot-plug detection on Windows (device notification listener)
+- [x] 2.5 Implement camera capability enumeration — query supported UVC controls with min/max/step/default for each
+- [x] 2.6 Implement camera identification persistence — generate stable identifiers from VID:PID + serial number
+- [x] 2.7 Expose Tauri IPC commands: `list_cameras`, `watch_cameras`, `get_camera_controls`, `get_camera_formats`
 
 ## 3. Camera discovery — Frontend sidebar
 
-- [ ] 3.1 Create `CameraSidebar` component with camera list layout
-- [ ] 3.2 Implement camera device state management (React context or Zustand store) synced with Tauri backend events
-- [ ] 3.3 Render camera entries with model name and placeholder thumbnails
-- [ ] 3.4 Implement camera selection — click to select, highlight active, update main panel
-- [ ] 3.5 Handle empty state — "no cameras found" message when no devices detected
-- [ ] 3.6 Handle hot-plug events — add/remove cameras from sidebar in real time with toast notifications
+- [x] 3.1 Create `CameraSidebar` component with camera list layout
+- [x] 3.2 Implement camera device state management (React context or Zustand store) synced with Tauri backend events
+- [x] 3.3 Render camera entries with model name and placeholder thumbnails
+- [x] 3.4 Implement camera selection — click to select, highlight active, update main panel
+- [x] 3.5 Handle empty state — "no cameras found" message when no devices detected
+- [x] 3.6 Handle hot-plug events — add/remove cameras from sidebar in real time with toast notifications
 
 ## 4. Camera frame capture and preview
 
-- [ ] 4.1 Implement frame capture pipeline in Rust — open camera, capture frames into a ring buffer
-- [ ] 4.2 Implement JPEG compression for frame delivery (main preview at quality 85, thumbnails at reduced resolution)
-- [ ] 4.3 Expose Tauri IPC command: `start_preview`, `stop_preview`, `get_frame`
-- [ ] 4.4 Create `PreviewCanvas` component — render JPEG frames via Canvas2D or `<img>` with blob URLs
-- [ ] 4.5 Implement sidebar thumbnail previews — low-resolution live thumbnails for each camera (5-10 fps)
-- [ ] 4.6 Implement diagnostic stats collection in Rust — actual fps, drop count, latency, bandwidth, USB bus info
-- [ ] 4.7 Create toggleable diagnostic overlay on the preview displaying all collected stats in real time
-- [ ] 4.8 Benchmark frame delivery latency and optimise if > 100ms
+- [x] 4.1 Implement frame capture pipeline in Rust — open camera, capture frames into a ring buffer
+- [x] 4.2 Implement JPEG compression for frame delivery (main preview at quality 85, thumbnails at reduced resolution)
+- [x] 4.3 Expose Tauri IPC command: `start_preview`, `stop_preview`, `get_frame`
+- [x] 4.4 Create `PreviewCanvas` component — render JPEG frames via Canvas2D or `<img>` with blob URLs
+- [x] 4.5 Implement sidebar thumbnail previews — low-resolution live thumbnails for each camera (5-10 fps)
+- [x] 4.6 Implement diagnostic stats collection in Rust — actual fps, drop count, latency, bandwidth, USB bus info
+- [x] 4.7 Create toggleable diagnostic overlay on the preview displaying all collected stats in real time
+- [x] 4.8 Benchmark frame delivery latency and optimise if > 100ms
 
 ## 5. Basic camera controls — Rust backend
 
-- [ ] 5.1 Implement `get_control` and `set_control` for UVC controls on Windows (brightness, contrast, saturation, etc.)
-- [ ] 5.2 Expose Tauri IPC commands: `set_camera_control`, `reset_camera_control`
-- [ ] 5.3 Implement error handling — return descriptive errors when hardware rejects a control value
+- [x] 5.1 Implement `get_control` and `set_control` for UVC controls on Windows (brightness, contrast, saturation, etc.)
+- [x] 5.2 Expose Tauri IPC commands: `set_camera_control`, `reset_camera_control`
+- [x] 5.3 Implement error handling — return descriptive errors when hardware rejects a control value
 
 ## 6. Basic camera controls — Frontend
 
-- [ ] 6.1 Create `ControlRenderer` component that maps `ControlDescriptor` to appropriate UI widget (slider, toggle, select)
-- [ ] 6.2 Create `ControlSlider` component with numeric display, direct numeric input, and reset-to-default button
-- [ ] 6.3 Create `ControlToggle` and `ControlSelect` components
-- [ ] 6.4 Implement greyed-out disabled state for unsupported controls with tooltip ("Not supported by [Camera Name]")
-- [ ] 6.5 Implement accordion section grouping based on `ControlDescriptor.group` field
-- [ ] 6.6 Wire controls to Tauri IPC — real-time slider changes sent to backend without debounce
-- [ ] 6.7 Handle control value rejection — revert slider to last valid value with inline error
-- [ ] 6.8 Ensure all controls meet WCAG 2.2 AA — keyboard nav, ARIA labels, contrast ratios, visible focus indicators
+- [x] 6.1 Create `ControlRenderer` component that maps `ControlDescriptor` to appropriate UI widget (slider, toggle, select)
+- [x] 6.2 Create `ControlSlider` component with numeric display, direct numeric input, and reset-to-default button
+- [x] 6.3 Create `ControlToggle` and `ControlSelect` components
+- [x] 6.4 Implement greyed-out disabled state for unsupported controls with tooltip ("Not supported by [Camera Name]")
+- [x] 6.5 Implement accordion section grouping based on `ControlDescriptor.group` field
+- [x] 6.6 Wire controls to Tauri IPC — real-time slider changes sent to backend without debounce
+- [x] 6.7 Handle control value rejection — revert slider to last valid value with inline error
+- [x] 6.8 Ensure all controls meet WCAG 2.2 AA — keyboard nav, ARIA labels, contrast ratios, visible focus indicators
 
 ## 7. App shell — System tray and window management
 
-- [ ] 7.1 Configure Tauri system tray with icon, context menu (active camera, open panel, quit)
-- [ ] 7.2 Implement minimise-to-tray behaviour (window close minimises, tray click restores)
-- [ ] 7.3 Implement OS theme detection and following (light/dark) in the React frontend
-- [ ] 7.4 Set up base CSS/design tokens for the app's visual design (colours, spacing, typography)
+- [x] 7.1 Configure Tauri system tray with icon, context menu (active camera, open panel, quit)
+- [x] 7.2 Implement minimise-to-tray behaviour (window close minimises, tray click restores)
+- [x] 7.3 Implement OS theme detection and following (light/dark) in the React frontend
+- [x] 7.4 Set up base CSS/design tokens for the app's visual design (colours, spacing, typography)
 
 ## 8. Visual regression testing
 
-- [ ] 8.1 Install dependencies: `@vitest/browser`, `vitest-browser-react`, `playwright`
-- [ ] 8.2 Create `vitest.workspace.ts` separating unit tests (jsdom) from visual tests (browser/playwright)
-- [ ] 8.3 Move existing `test` config from `vite.config.ts` into workspace, add `test:visual` script to `package.json`
-- [ ] 8.4 Create test helper for rendering components in browser mode with app styles loaded
-- [ ] 8.5 Write visual test: empty state (sidebar + placeholder)
-- [ ] 8.6 Write visual test: camera sidebar with mocked devices
-- [ ] 8.7 Write visual test: controls panel (sliders, toggles, accordion sections)
-- [ ] 8.8 Write visual test: toast notifications (all types)
-- [ ] 8.9 Write visual test: disabled control state
-- [ ] 8.10 Generate and commit initial baselines on Linux/Chromium
-- [ ] 8.11 Add visual regression job to `checks.yml` CI workflow
-- [ ] 8.12 Update pre-commit hooks lint-staged config if needed (exclude `__screenshots__` from formatting)
+- [x] 8.1 Install dependencies: `@vitest/browser`, `vitest-browser-react`, `playwright`
+- [x] 8.2 Create `vitest.workspace.ts` separating unit tests (jsdom) from visual tests (browser/playwright)
+- [x] 8.3 Move existing `test` config from `vite.config.ts` into workspace, add `test:visual` script to `package.json`
+- [x] 8.4 Create test helper for rendering components in browser mode with app styles loaded
+- [x] 8.5 Write visual test: empty state (sidebar + placeholder)
+- [x] 8.6 Write visual test: camera sidebar with mocked devices
+- [x] 8.7 Write visual test: controls panel (sliders, toggles, accordion sections)
+- [x] 8.8 Write visual test: toast notifications (all types)
+- [x] 8.9 Write visual test: disabled control state
+- [x] 8.10 Generate and commit initial baselines on Linux/Chromium
+- [x] 8.11 Add visual regression job to `checks.yml` CI workflow
+- [x] 8.12 Update pre-commit hooks lint-staged config if needed (exclude `__screenshots__` from formatting)
 
 ---
 

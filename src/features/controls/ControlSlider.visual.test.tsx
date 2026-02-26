@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { renderVisual } from '../../test-utils/visual'
+import { page, renderVisual } from '../../test-utils/visual'
 import type { ControlDescriptor } from '../../types/camera'
 import { ControlSlider } from './ControlSlider'
 import './ControlSlider.css'
@@ -19,8 +19,8 @@ const unsupportedControl: ControlDescriptor = {
 }
 
 test('disabled slider matches baseline', async () => {
-  const { container } = await renderVisual(
-    <div style={{ width: '400px' }}>
+  await renderVisual(
+    <div className="visual-test-wrapper" style={{ width: '400px' }}>
       <ControlSlider
         descriptor={unsupportedControl}
         value={64}
@@ -32,5 +32,6 @@ test('disabled slider matches baseline', async () => {
     </div>,
   )
 
-  await expect.element(container).toMatchScreenshot()
+  const wrapper = page.elementLocator(document.querySelector('.visual-test-wrapper') as Element)
+  await expect.element(wrapper).toMatchScreenshot()
 })
