@@ -3,5 +3,6 @@
 pub mod backend;
 pub mod commands;
 pub mod error;
+pub mod hotplug_bridge;
 pub mod platform;
 pub mod types;
