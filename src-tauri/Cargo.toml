@@ -28,6 +28,10 @@ tauri-plugin-fs = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+fast_image_resize = "6"
+parking_lot = "0.12"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
