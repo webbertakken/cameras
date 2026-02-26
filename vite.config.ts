@@ -1,7 +1,7 @@
-import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
 
-const host = process.env.TAURI_DEV_HOST;
+const host = process.env.TAURI_DEV_HOST
 
 export default defineConfig(async () => ({
   plugins: [react()],
@@ -12,13 +12,13 @@ export default defineConfig(async () => ({
     host: host || false,
     hmr: host
       ? {
-          protocol: "ws",
+          protocol: 'ws',
           host,
           port: 5174,
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      ignored: ['**/src-tauri/**'],
     },
   },
-}));
+}))

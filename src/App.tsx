@@ -3,7 +3,7 @@ function App() {
     <main>
       <h1>Webcam Settings</h1>
     </main>
-  );
+  )
 }
 
-export default App;
+export default App
