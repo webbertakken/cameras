@@ -72,8 +72,11 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
       const fetchFrame = async () => {
         if (!runningRef.current) return
         try {
-          const bytes = await invoke<number[]>('get_frame', { deviceId })
-          const blob = new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })
+          const base64 = await invoke<string>('get_frame', { deviceId })
+          const raw = atob(base64)
+          const bytes = new Uint8Array(raw.length)
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+          const blob = new Blob([bytes], { type: 'image/jpeg' })
           const url = URL.createObjectURL(blob)
           if (prevBlobUrlRef.current) {
             URL.revokeObjectURL(prevBlobUrlRef.current)
