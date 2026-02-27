@@ -10,15 +10,24 @@ use crate::camera::commands::CameraState;
 use crate::camera::types::DeviceId;
 use crate::diagnostics::stats::DiagnosticSnapshot;
 
+/// Cached JPEG result for a single device, keyed by frame timestamp.
+struct JpegCache {
+    timestamp_us: u64,
+    base64: String,
+}
+
 /// Managed state holding active preview sessions.
 pub struct PreviewState {
     pub sessions: Mutex<HashMap<String, CaptureSession>>,
+    /// Per-device JPEG cache to avoid recompressing unchanged frames.
+    jpeg_cache: Mutex<HashMap<String, JpegCache>>,
 }
 
 impl PreviewState {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            jpeg_cache: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -104,30 +113,59 @@ pub async fn stop_preview(state: State<'_, PreviewState>, device_id: String) -> 
     if let Some(mut session) = sessions.remove(&device_id) {
         session.stop();
     }
+    // Remove cached JPEG for this device
+    state.jpeg_cache.lock().remove(&device_id);
     Ok(())
 }
 
 /// Get the latest frame as base64-encoded JPEG.
+///
+/// Caches the compressed result per device — if the frame timestamp hasn't
+/// changed since the last call, the cached JPEG is returned immediately
+/// without recompressing.
 #[tauri::command]
 pub async fn get_frame(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
-    let sessions = state.sessions.lock();
-    let session = sessions
-        .get(&device_id)
-        .ok_or_else(|| "no active preview for this device".to_string())?;
+    let frame = {
+        let sessions = state.sessions.lock();
+        let session = sessions
+            .get(&device_id)
+            .ok_or_else(|| "no active preview for this device".to_string())?;
 
-    let frame = session
-        .buffer()
-        .latest()
-        .ok_or_else(|| "no frame available".to_string())?;
+        session
+            .buffer()
+            .latest()
+            .ok_or_else(|| "no frame available".to_string())?
+    };
+
+    // Check cache — return early if the frame hasn't changed
+    {
+        let cache = state.jpeg_cache.lock();
+        if let Some(cached) = cache.get(&device_id) {
+            if cached.timestamp_us == frame.timestamp_us {
+                return Ok(cached.base64.clone());
+            }
+        }
+    }
 
     let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 85);
-    Ok(base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        &jpeg,
-    ))
+    let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
+
+    // Store in cache
+    {
+        let mut cache = state.jpeg_cache.lock();
+        cache.insert(
+            device_id,
+            JpegCache {
+                timestamp_us: frame.timestamp_us,
+                base64: base64.clone(),
+            },
+        );
+    }
+
+    Ok(base64)
 }
 
 /// Get a thumbnail (160x120) as base64-encoded JPEG.
@@ -136,15 +174,17 @@ pub async fn get_thumbnail(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
-    let sessions = state.sessions.lock();
-    let session = sessions
-        .get(&device_id)
-        .ok_or_else(|| "no active preview for this device".to_string())?;
+    let frame = {
+        let sessions = state.sessions.lock();
+        let session = sessions
+            .get(&device_id)
+            .ok_or_else(|| "no active preview for this device".to_string())?;
 
-    let frame = session
-        .buffer()
-        .latest()
-        .ok_or_else(|| "no frame available".to_string())?;
+        session
+            .buffer()
+            .latest()
+            .ok_or_else(|| "no frame available".to_string())?
+    };
 
     let thumb = compress::compress_thumbnail(&frame.data, frame.width, frame.height, 160, 120);
     Ok(base64::Engine::encode(
@@ -295,5 +335,107 @@ mod tests {
             !json.contains("device_id"),
             "expected no snake_case key: {json}"
         );
+    }
+
+    #[test]
+    fn jpeg_cache_returns_same_result_for_same_timestamp() {
+        let state = make_preview_state();
+
+        // Insert a session with a frame
+        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        session.buffer().push(make_rgb_frame(10, 10));
+        state.sessions.lock().insert("dev-1".to_string(), session);
+
+        // Simulate first get_frame: compress and cache
+        let frame1 = {
+            let sessions = state.sessions.lock();
+            sessions.get("dev-1").unwrap().buffer().latest().unwrap()
+        };
+        let jpeg = compress::compress_jpeg(&frame1.data, frame1.width, frame1.height, 85);
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
+        state.jpeg_cache.lock().insert(
+            "dev-1".to_string(),
+            JpegCache {
+                timestamp_us: frame1.timestamp_us,
+                base64: b64.clone(),
+            },
+        );
+
+        // Simulate second get_frame: should hit cache
+        let cache = state.jpeg_cache.lock();
+        let cached = cache.get("dev-1").unwrap();
+        assert_eq!(cached.timestamp_us, 1000);
+        assert_eq!(cached.base64, b64);
+    }
+
+    #[test]
+    fn jpeg_cache_invalidates_on_new_frame() {
+        let state = make_preview_state();
+
+        // Seed cache with old timestamp
+        state.jpeg_cache.lock().insert(
+            "dev-1".to_string(),
+            JpegCache {
+                timestamp_us: 500,
+                base64: "old-data".to_string(),
+            },
+        );
+
+        // New frame with different timestamp
+        let frame = Frame {
+            data: vec![128u8; 300],
+            width: 10,
+            height: 10,
+            timestamp_us: 1000,
+        };
+
+        // Cache miss — timestamps differ
+        let cache = state.jpeg_cache.lock();
+        let cached = cache.get("dev-1").unwrap();
+        assert_ne!(cached.timestamp_us, frame.timestamp_us);
+    }
+
+    #[test]
+    fn stop_preview_clears_jpeg_cache() {
+        let state = make_preview_state();
+
+        // Create session and cache entry
+        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        state.sessions.lock().insert("dev-1".to_string(), session);
+        state.jpeg_cache.lock().insert(
+            "dev-1".to_string(),
+            JpegCache {
+                timestamp_us: 1000,
+                base64: "cached".to_string(),
+            },
+        );
+
+        // Stop the preview
+        {
+            let mut sessions = state.sessions.lock();
+            if let Some(mut s) = sessions.remove("dev-1") {
+                s.stop();
+            }
+        }
+        state.jpeg_cache.lock().remove("dev-1");
+
+        // Cache should be cleared
+        assert!(state.jpeg_cache.lock().get("dev-1").is_none());
+    }
+
+    #[test]
+    fn frame_buffer_latest_returns_arc() {
+        let state = make_preview_state();
+        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        session.buffer().push(make_rgb_frame(10, 10));
+        state.sessions.lock().insert("dev-1".to_string(), session);
+
+        let sessions = state.sessions.lock();
+        let session = sessions.get("dev-1").unwrap();
+        let frame1 = session.buffer().latest().unwrap();
+        let frame2 = session.buffer().latest().unwrap();
+
+        // Both should point to the same allocation (Arc)
+        assert!(std::sync::Arc::ptr_eq(&frame1, &frame2));
     }
 }

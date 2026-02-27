@@ -12,9 +12,8 @@ use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 pub type ErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// A single captured frame from the camera.
-#[derive(Clone)]
 pub struct Frame {
-    /// Raw pixel data (RGB) or compressed JPEG bytes.
+    /// Raw pixel data (RGB).
     pub data: Vec<u8>,
     /// Frame width in pixels.
     pub width: u32,
@@ -27,9 +26,10 @@ pub struct Frame {
 /// Thread-safe ring buffer for camera frames.
 ///
 /// Stores up to `capacity` frames, overwriting the oldest when full.
-/// Designed for a single-producer (capture thread) / single-consumer (IPC) pattern.
+/// Frames are wrapped in `Arc` so consumers get a cheap reference-counted
+/// pointer instead of cloning multi-megabyte pixel buffers.
 pub struct FrameBuffer {
-    frames: Mutex<Vec<Option<Frame>>>,
+    frames: Mutex<Vec<Option<Arc<Frame>>>>,
     capacity: usize,
     write_idx: Mutex<usize>,
 }
@@ -49,15 +49,17 @@ impl FrameBuffer {
     pub fn push(&self, frame: Frame) {
         let mut frames = self.frames.lock();
         let mut idx = self.write_idx.lock();
-        frames[*idx] = Some(frame);
+        frames[*idx] = Some(Arc::new(frame));
         *idx = (*idx + 1) % self.capacity;
     }
 
     /// Get the most recently pushed frame, if any.
-    pub fn latest(&self) -> Option<Frame> {
+    ///
+    /// Returns an `Arc<Frame>` — a cheap clone of a reference-counted pointer
+    /// rather than copying the entire pixel buffer.
+    pub fn latest(&self) -> Option<Arc<Frame>> {
         let frames = self.frames.lock();
         let idx = self.write_idx.lock();
-        // The latest frame is at (write_idx - 1) mod capacity
         if self.capacity == 0 {
             return None;
         }
@@ -246,6 +248,19 @@ mod tests {
     fn frame_buffer_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<FrameBuffer>();
+    }
+
+    #[test]
+    fn frame_buffer_latest_returns_arc_not_clone() {
+        let buf = FrameBuffer::new(3);
+        buf.push(make_frame(42, 100));
+
+        let a = buf.latest().unwrap();
+        let b = buf.latest().unwrap();
+
+        // Both should point to the same allocation — no deep copy
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(a.data[0], 42);
     }
 
     #[test]
