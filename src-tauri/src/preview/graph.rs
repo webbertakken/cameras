@@ -324,21 +324,13 @@ pub mod directshow {
 
             data.stats.lock().record_frame(frame_bytes, timestamp_us);
         } else {
-            // Unknown/unsupported format — push raw data so we can verify
-            // frames arrive. Proper YUY2/NV12 conversion can be added later.
+            // Unsupported format — drop the frame to prevent panics in
+            // compress_jpeg which expects RGB24 (width*height*3 bytes).
             warn!(
-                "unsupported sub_type {:?}, pushing raw data ({len} bytes)",
+                "unsupported sub_type {:?}, dropping frame ({len} bytes)",
                 data.sub_type
             );
-
-            data.buffer.push(Frame {
-                data: raw.to_vec(),
-                width: data.width,
-                height: data.height,
-                timestamp_us,
-            });
-
-            data.stats.lock().record_frame(len, timestamp_us);
+            data.stats.lock().record_drop();
         }
 
         HRESULT(0)
@@ -558,8 +550,8 @@ pub mod directshow {
 
             let mt = AmMediaType {
                 major_type: MEDIATYPE_VIDEO,
-                sub_type: GUID::zeroed(),    // Accept any video subtype
-                format_type: GUID::zeroed(), // Accept any format type
+                sub_type: MEDIASUBTYPE_RGB24, // Require RGB24 output
+                format_type: GUID::zeroed(),  // Accept any format header (VideoInfo or VideoInfo2)
                 ..AmMediaType::default()
             };
 
