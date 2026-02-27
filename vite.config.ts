@@ -41,8 +41,10 @@ export default defineConfig(async () => ({
           include: ['src/**/*.visual.test.{ts,tsx}'],
           browser: {
             enabled: true,
-            provider: playwright(),
-            instances: [{ browser: 'chromium', context: { colorScheme: 'dark' } }],
+            provider: playwright({
+              contextOptions: { colorScheme: 'dark' },
+            }),
+            instances: [{ browser: 'chromium' }],
             screenshotFailures: false,
           },
         },
