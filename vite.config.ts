@@ -45,6 +45,12 @@ export default defineConfig(async () => ({
               contextOptions: { colorScheme: 'dark' },
             }),
             instances: [{ browser: 'chromium' }],
+            orchestratorScripts: [
+              {
+                content: `localStorage.setItem('vueuse-color-scheme', 'dark')`,
+                type: 'module',
+              },
+            ],
             screenshotFailures: false,
           },
         },
