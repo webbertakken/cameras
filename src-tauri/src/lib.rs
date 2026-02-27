@@ -17,7 +17,9 @@ use camera::commands::{
     set_camera_control, CameraState,
 };
 use camera::hotplug_bridge::start_hotplug_watcher;
-use preview::commands::{get_frame, get_thumbnail, start_preview, stop_preview, PreviewState};
+use preview::commands::{
+    get_diagnostics, get_frame, get_thumbnail, start_preview, stop_preview, PreviewState,
+};
 
 /// Create the camera backend for the current platform.
 fn create_camera_state() -> CameraState {
@@ -107,6 +109,7 @@ pub fn run() {
             stop_preview,
             get_frame,
             get_thumbnail,
+            get_diagnostics,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
