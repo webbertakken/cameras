@@ -9,11 +9,12 @@ pub mod directshow {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use tracing::{debug, info};
+    use tracing::{debug, error, info, warn};
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
         IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl, IPin,
     };
+    use windows::Win32::Media::MediaFoundation::VIDEOINFOHEADER;
     use windows::Win32::Media::MediaFoundation::{
         CLSID_SystemDeviceEnum, CLSID_VideoInputDeviceCategory,
     };
@@ -175,6 +176,10 @@ pub mod directshow {
         unsafe fn set_callback(&self, callback: *mut core::ffi::c_void, which: i32) -> HRESULT {
             (self.vtbl().set_callback)(self.ptr, callback, which)
         }
+
+        unsafe fn get_connected_media_type(&self, mt: &mut AmMediaType) -> HRESULT {
+            (self.vtbl().get_connected_media_type)(self.ptr, mt)
+        }
     }
 
     impl Drop for SampleGrabber {
@@ -281,6 +286,8 @@ pub mod directshow {
         }
 
         if buffer.is_null() || buffer_len <= 0 {
+            warn!("frame callback received null/empty buffer (len={buffer_len})");
+            data.stats.lock().record_drop();
             return HRESULT(0);
         }
 
@@ -294,6 +301,11 @@ pub mod directshow {
         let expected = stride * height;
 
         if len < expected {
+            warn!(
+                "frame size mismatch: got {len} bytes, expected {expected} ({}x{})",
+                width, height
+            );
+            data.stats.lock().record_drop();
             return HRESULT(0);
         }
 
@@ -448,8 +460,8 @@ pub mod directshow {
     /// capture thread.
     pub fn run_capture_graph(
         device_path: &str,
-        width: u32,
-        height: u32,
+        _width: u32,
+        _height: u32,
         buffer: Arc<FrameBuffer>,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
@@ -458,32 +470,51 @@ pub mod directshow {
             let _guard = ComGuard::init()?;
 
             // 1. Create filter graph
+            info!("creating capture graph for {device_path}");
             let graph: IGraphBuilder =
-                CoCreateInstance(&CLSID_FILTER_GRAPH, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| format!("failed to create filter graph: {e}"))?;
+                CoCreateInstance(&CLSID_FILTER_GRAPH, None, CLSCTX_INPROC_SERVER).map_err(|e| {
+                    error!("failed to create filter graph: {e}");
+                    format!("failed to create filter graph: {e}")
+                })?;
 
-            let graph2: IFilterGraph2 = graph
-                .cast()
-                .map_err(|e| format!("failed to get IFilterGraph2: {e}"))?;
+            let graph2: IFilterGraph2 = graph.cast().map_err(|e| {
+                error!("failed to get IFilterGraph2: {e}");
+                format!("failed to get IFilterGraph2: {e}")
+            })?;
 
             // 2. Find and add source filter
-            let source = find_source_filter(device_path)?;
+            let source = find_source_filter(device_path).map_err(|e| {
+                error!("failed to find source filter for {device_path}: {e}");
+                e
+            })?;
             graph2
                 .AddFilter(&source, windows::core::w!("Source"))
-                .map_err(|e| format!("failed to add source filter: {e}"))?;
+                .map_err(|e| {
+                    error!("failed to add source filter: {e}");
+                    format!("failed to add source filter: {e}")
+                })?;
 
             // 3. Create and add SampleGrabber filter
             let grabber_filter: IBaseFilter =
-                CoCreateInstance(&CLSID_SAMPLE_GRABBER, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| format!("failed to create SampleGrabber: {e}"))?;
+                CoCreateInstance(&CLSID_SAMPLE_GRABBER, None, CLSCTX_INPROC_SERVER).map_err(
+                    |e| {
+                        error!("failed to create SampleGrabber: {e}");
+                        format!("failed to create SampleGrabber: {e}")
+                    },
+                )?;
 
             graph2
                 .AddFilter(&grabber_filter, windows::core::w!("SampleGrabber"))
-                .map_err(|e| format!("failed to add SampleGrabber filter: {e}"))?;
+                .map_err(|e| {
+                    error!("failed to add SampleGrabber filter: {e}");
+                    format!("failed to add SampleGrabber filter: {e}")
+                })?;
 
             // 4. Configure SampleGrabber to accept RGB24
-            let grabber = SampleGrabber::from_filter(&grabber_filter)
-                .ok_or("failed to query ISampleGrabber")?;
+            let grabber = SampleGrabber::from_filter(&grabber_filter).ok_or_else(|| {
+                error!("failed to query ISampleGrabber from SampleGrabber filter");
+                "failed to query ISampleGrabber".to_string()
+            })?;
 
             let mt = AmMediaType {
                 major_type: MEDIATYPE_VIDEO,
@@ -494,71 +525,128 @@ pub mod directshow {
 
             let hr = grabber.set_media_type(&mt);
             if hr.is_err() {
+                error!("SetMediaType(RGB24) failed: {hr:?}");
                 return Err(format!("SetMediaType failed: {hr:?}"));
             }
 
             let hr = grabber.set_one_shot(false);
             if hr.is_err() {
+                error!("SetOneShot failed: {hr:?}");
                 return Err(format!("SetOneShot failed: {hr:?}"));
             }
 
             let hr = grabber.set_buffer_samples(false);
             if hr.is_err() {
+                error!("SetBufferSamples failed: {hr:?}");
                 return Err(format!("SetBufferSamples failed: {hr:?}"));
             }
 
             // 5. Create and add NullRenderer
             let null_renderer: IBaseFilter =
-                CoCreateInstance(&CLSID_NULL_RENDERER, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| format!("failed to create NullRenderer: {e}"))?;
+                CoCreateInstance(&CLSID_NULL_RENDERER, None, CLSCTX_INPROC_SERVER).map_err(
+                    |e| {
+                        error!("failed to create NullRenderer: {e}");
+                        format!("failed to create NullRenderer: {e}")
+                    },
+                )?;
 
             graph2
                 .AddFilter(&null_renderer, windows::core::w!("NullRenderer"))
-                .map_err(|e| format!("failed to add NullRenderer: {e}"))?;
+                .map_err(|e| {
+                    error!("failed to add NullRenderer: {e}");
+                    format!("failed to add NullRenderer: {e}")
+                })?;
 
-            // 6. Connect: Source output -> SampleGrabber input
+            // 6. Connect: Source -> SampleGrabber (intelligent connect
+            //    inserts colour-space converters when the camera outputs
+            //    MJPG/YUY2 instead of RGB24)
             let source_out = find_unconnected_pin(&source, 1)?;
             let grabber_in = find_unconnected_pin(&grabber_filter, 0)?;
-            graph2
-                .ConnectDirect(&source_out, &grabber_in, None)
-                .map_err(|e| format!("failed to connect source -> grabber: {e}"))?;
+            graph2.Connect(&source_out, &grabber_in).map_err(|e| {
+                error!("failed to connect source -> grabber: {e}");
+                format!("failed to connect source -> grabber: {e}")
+            })?;
 
-            // 7. Connect: SampleGrabber output -> NullRenderer input
+            // 7. Connect: SampleGrabber -> NullRenderer
             let grabber_out = find_unconnected_pin(&grabber_filter, 1)?;
             let null_in = find_unconnected_pin(&null_renderer, 0)?;
-            graph2
-                .ConnectDirect(&grabber_out, &null_in, None)
-                .map_err(|e| format!("failed to connect grabber -> null renderer: {e}"))?;
+            graph2.Connect(&grabber_out, &null_in).map_err(|e| {
+                error!("failed to connect grabber -> null renderer: {e}");
+                format!("failed to connect grabber -> null renderer: {e}")
+            })?;
 
-            // 8. Set up callback (mode 1 = BufferCB)
-            let callback =
-                create_frame_callback(buffer, width, height, Arc::clone(&running), stats);
+            // 8. Query the actual negotiated resolution from the connected
+            //    media type — the camera may have chosen a different size
+            //    than what was requested.
+            let mut connected_mt = AmMediaType::default();
+            let hr = grabber.get_connected_media_type(&mut connected_mt);
+            let (actual_width, actual_height) = if hr.is_ok()
+                && connected_mt.format_type == FORMAT_VIDEOINFO
+                && !connected_mt.pb_format.is_null()
+                && connected_mt.cb_format as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+            {
+                let vih = &*(connected_mt.pb_format as *const VIDEOINFOHEADER);
+                let w = vih.bmiHeader.biWidth as u32;
+                let h = vih.bmiHeader.biHeight.unsigned_abs();
+                info!("negotiated resolution: {w}x{h}");
+                (w, h)
+            } else {
+                warn!(
+                    "could not query connected media type (hr={hr:?}), \
+                     falling back to requested {_width}x{_height}"
+                );
+                (_width, _height)
+            };
+
+            // Free the format block if allocated
+            if !connected_mt.pb_format.is_null() {
+                windows::Win32::System::Com::CoTaskMemFree(Some(
+                    connected_mt.pb_format as *mut core::ffi::c_void,
+                ));
+            }
+
+            // 9. Set up callback (mode 1 = BufferCB) with actual resolution
+            let callback = create_frame_callback(
+                buffer,
+                actual_width,
+                actual_height,
+                Arc::clone(&running),
+                stats,
+            );
 
             let hr = grabber.set_callback(callback, 1);
             if hr.is_err() {
+                error!("SetCallback failed: {hr:?}");
                 return Err(format!("SetCallback failed: {hr:?}"));
             }
 
-            // 9. Run the graph
-            let media_control: IMediaControl = graph
-                .cast()
-                .map_err(|e| format!("failed to get IMediaControl: {e}"))?;
-
-            media_control
-                .Run()
-                .map_err(|e| format!("failed to run graph: {e}"))?;
-
-            info!("capture graph running for {device_path}");
+            // 10. Accept frames BEFORE running the graph to avoid dropping
+            //     the first few frames
             running.store(true, Ordering::Relaxed);
 
-            // 10. Block until stopped
+            let media_control: IMediaControl = graph.cast().map_err(|e| {
+                error!("failed to get IMediaControl: {e}");
+                format!("failed to get IMediaControl: {e}")
+            })?;
+
+            media_control.Run().map_err(|e| {
+                error!("failed to run graph: {e}");
+                running.store(false, Ordering::Relaxed);
+                format!("failed to run graph: {e}")
+            })?;
+
+            info!("capture graph running for {device_path} at {actual_width}x{actual_height}");
+
+            // 11. Block until stopped
             while running.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
 
-            // 11. Cleanup
-            debug!("stopping capture graph");
-            let _ = media_control.Stop();
+            // 12. Cleanup
+            debug!("stopping capture graph for {device_path}");
+            if let Err(e) = media_control.Stop() {
+                warn!("IMediaControl::Stop failed: {e}");
+            }
 
             Ok(())
         }
