@@ -42,7 +42,7 @@ export default defineConfig(async () => ({
           browser: {
             enabled: true,
             provider: playwright(),
-            instances: [{ browser: 'chromium' }],
+            instances: [{ browser: 'chromium', context: { colorScheme: 'dark' } }],
             screenshotFailures: false,
           },
         },
