@@ -93,10 +93,11 @@ describe('usePreview', () => {
     expect(result.current.frameSrc).toBeNull()
   })
 
-  it('creates blob URL from frame bytes', async () => {
+  it('creates blob URL from base64 frame', async () => {
+    const fakeBase64 = btoa(String.fromCharCode(0xff, 0xd8, 0x01, 0x02))
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_preview') return undefined
-      if (cmd === 'get_frame') return [0xff, 0xd8, 0x01, 0x02]
+      if (cmd === 'get_frame') return fakeBase64
       if (cmd === 'stop_preview') return undefined
       return undefined
     })
@@ -132,7 +133,7 @@ describe('usePreview', () => {
     let frameCount = 0
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_preview') return undefined
-      if (cmd === 'get_frame') return [0xff, 0xd8, ++frameCount]
+      if (cmd === 'get_frame') return btoa(String.fromCharCode(0xff, 0xd8, ++frameCount))
       if (cmd === 'stop_preview') return undefined
       return undefined
     })
