@@ -27,7 +27,7 @@ pub mod directshow {
 
     use crate::diagnostics::stats::DiagnosticStats;
     use crate::preview::capture::{Frame, FrameBuffer};
-    use crate::preview::graph::convert_bgr_bottom_up_to_rgb;
+    use crate::preview::graph::{convert_bgr_bottom_up_to_rgb, convert_yuy2_to_rgb};
 
     // --- Manually defined types not in windows-rs metadata ---
 
@@ -88,6 +88,9 @@ pub mod directshow {
 
     // MEDIASUBTYPE_RGB24: {e436eb7d-524f-11ce-9f53-0020af0ba770}
     const MEDIASUBTYPE_RGB24: GUID = GUID::from_u128(0xe436eb7d_524f_11ce_9f53_0020af0ba770);
+
+    // MEDIASUBTYPE_YUY2: {32595559-0000-0010-8000-00AA00389B71}
+    const MEDIASUBTYPE_YUY2: GUID = GUID::from_u128(0x32595559_0000_0010_8000_00AA00389B71);
 
     // FORMAT_VideoInfo: {05589F80-C356-11CE-BF01-00AA0055595A}
     const FORMAT_VIDEOINFO: GUID = GUID::from_u128(0x05589f80_c356_11ce_bf01_00aa0055595a);
@@ -296,33 +299,30 @@ pub mod directshow {
         let raw = std::slice::from_raw_parts(buffer, len);
         let timestamp_us = (sample_time * 1_000_000.0) as u64;
 
-        if data.sub_type == MEDIASUBTYPE_RGB24 {
-            // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
-            let width = data.width as usize;
-            let height = data.height as usize;
-            let stride = width * 3;
-            let expected = stride * height;
+        let width = data.width as usize;
+        let height = data.height as usize;
 
+        let rgb = if data.sub_type == MEDIASUBTYPE_RGB24 {
+            // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
+            let expected = width * 3 * height;
             if len < expected {
                 warn!(
-                    "frame size mismatch: got {len} bytes, expected {expected} ({}x{})",
-                    width, height
+                    "frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
                 );
                 data.stats.lock().record_drop();
                 return HRESULT(0);
             }
-
-            let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
-            let frame_bytes = rgb.len();
-
-            data.buffer.push(Frame {
-                data: rgb,
-                width: data.width,
-                height: data.height,
-                timestamp_us,
-            });
-
-            data.stats.lock().record_frame(frame_bytes, timestamp_us);
+            convert_bgr_bottom_up_to_rgb(raw, width, height)
+        } else if data.sub_type == MEDIASUBTYPE_YUY2 {
+            let expected = width * height * 2;
+            if len < expected {
+                warn!(
+                    "YUY2 frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+            convert_yuy2_to_rgb(raw, width, height)
         } else {
             // Unsupported format — drop the frame to prevent panics in
             // compress_jpeg which expects RGB24 (width*height*3 bytes).
@@ -331,7 +331,17 @@ pub mod directshow {
                 data.sub_type
             );
             data.stats.lock().record_drop();
-        }
+            return HRESULT(0);
+        };
+
+        let frame_bytes = rgb.len();
+        data.buffer.push(Frame {
+            data: rgb,
+            width: data.width,
+            height: data.height,
+            timestamp_us,
+        });
+        data.stats.lock().record_frame(frame_bytes, timestamp_us);
 
         HRESULT(0)
     }
@@ -542,24 +552,11 @@ pub mod directshow {
                     format!("failed to add SampleGrabber filter: {e}")
                 })?;
 
-            // 4. Configure SampleGrabber to accept RGB24
+            // 4. Configure SampleGrabber
             let grabber = SampleGrabber::from_filter(&grabber_filter).ok_or_else(|| {
                 error!("failed to query ISampleGrabber from SampleGrabber filter");
                 "failed to query ISampleGrabber".to_string()
             })?;
-
-            let mt = AmMediaType {
-                major_type: MEDIATYPE_VIDEO,
-                sub_type: MEDIASUBTYPE_RGB24, // Require RGB24 output
-                format_type: GUID::zeroed(),  // Accept any format header (VideoInfo or VideoInfo2)
-                ..AmMediaType::default()
-            };
-
-            let hr = grabber.set_media_type(&mt);
-            if hr.is_err() {
-                error!("SetMediaType(RGB24) failed: {hr:?}");
-                return Err(format!("SetMediaType failed: {hr:?}"));
-            }
 
             let hr = grabber.set_one_shot(false);
             if hr.is_err() {
@@ -589,15 +586,56 @@ pub mod directshow {
                     format!("failed to add NullRenderer: {e}")
                 })?;
 
-            // 6. Connect: Source -> SampleGrabber (intelligent connect
-            //    inserts colour-space converters when the camera outputs
-            //    MJPG/YUY2 instead of RGB24)
+            // 6. Connect: Source -> SampleGrabber -> NullRenderer
+            //    Try RGB24 first (DirectShow inserts colour converters).
+            //    If that fails (e.g. OBS Virtual Camera only outputs YUY2/NV12),
+            //    fall back to accepting any subtype and convert in the callback.
+            let rgb24_mt = AmMediaType {
+                major_type: MEDIATYPE_VIDEO,
+                sub_type: MEDIASUBTYPE_RGB24,
+                format_type: GUID::zeroed(),
+                ..AmMediaType::default()
+            };
+
+            let hr = grabber.set_media_type(&rgb24_mt);
+            if hr.is_err() {
+                error!("SetMediaType(RGB24) failed: {hr:?}");
+                return Err(format!("SetMediaType failed: {hr:?}"));
+            }
+
             let source_out = find_unconnected_pin(&source, 1)?;
             let grabber_in = find_unconnected_pin(&grabber_filter, 0)?;
-            graph2.Connect(&source_out, &grabber_in).map_err(|e| {
-                error!("failed to connect source -> grabber: {e}");
-                format!("failed to connect source -> grabber: {e}")
-            })?;
+            let connect_result = graph2.Connect(&source_out, &grabber_in);
+
+            if let Err(ref e) = connect_result {
+                // 0x80040217 = VFW_E_CANNOT_CONNECT — no colour converter
+                // available. Fall back to accepting any subtype.
+                warn!("RGB24 connect failed ({e}), retrying with any subtype");
+
+                // Disconnect any partial connections before retrying
+                let _ = graph2.Disconnect(&source_out);
+                let _ = graph2.Disconnect(&grabber_in);
+
+                let any_mt = AmMediaType {
+                    major_type: MEDIATYPE_VIDEO,
+                    sub_type: GUID::zeroed(),
+                    format_type: GUID::zeroed(),
+                    ..AmMediaType::default()
+                };
+
+                let hr = grabber.set_media_type(&any_mt);
+                if hr.is_err() {
+                    error!("SetMediaType(any) failed: {hr:?}");
+                    return Err(format!("SetMediaType(any) failed: {hr:?}"));
+                }
+
+                graph2.Connect(&source_out, &grabber_in).map_err(|e| {
+                    error!("failed to connect source -> grabber (fallback): {e}");
+                    format!("failed to connect source -> grabber: {e}")
+                })?;
+
+                info!("connected with any-subtype fallback");
+            }
 
             // 7. Connect: SampleGrabber -> NullRenderer
             let grabber_out = find_unconnected_pin(&grabber_filter, 1)?;
@@ -755,6 +793,34 @@ pub fn convert_bgr_bottom_up_to_rgb(bgr: &[u8], width: usize, height: usize) -> 
     rgb
 }
 
+/// Convert YUY2 (YUYV) packed data to RGB24.
+///
+/// YUY2 stores two pixels per 4-byte macro-pixel: [Y0, U, Y1, V].
+/// Uses BT.601 conversion coefficients. Width must be even.
+pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let expected = width * height * 2;
+    if yuy2.len() < expected || width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let mut rgb = vec![0u8; width * height * 3];
+    for i in 0..(width * height / 2) {
+        let y0 = yuy2[i * 4] as f32;
+        let u = yuy2[i * 4 + 1] as f32 - 128.0;
+        let y1 = yuy2[i * 4 + 2] as f32;
+        let v = yuy2[i * 4 + 3] as f32 - 128.0;
+
+        let base = i * 6;
+        rgb[base] = (y0 + 1.402 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 1] = (y0 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 2] = (y0 + 1.772 * u).clamp(0.0, 255.0) as u8;
+        rgb[base + 3] = (y1 + 1.402 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 4] = (y1 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 5] = (y1 + 1.772 * u).clamp(0.0, 255.0) as u8;
+    }
+    rgb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,5 +895,51 @@ mod tests {
     fn empty_input_returns_empty() {
         let result = convert_bgr_bottom_up_to_rgb(&[], 0, 0);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_yuy2_white_pixel_pair() {
+        // White in YUY2: Y=235, U=128, V=128 (no chroma)
+        let yuy2 = vec![235, 128, 235, 128];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 1);
+        assert_eq!(rgb.len(), 6);
+        // Y=235, U=0, V=0 => R=235, G=235, B=235
+        assert_eq!(rgb[0], 235);
+        assert_eq!(rgb[1], 235);
+        assert_eq!(rgb[2], 235);
+        assert_eq!(rgb[3], 235);
+        assert_eq!(rgb[4], 235);
+        assert_eq!(rgb[5], 235);
+    }
+
+    #[test]
+    fn converts_yuy2_black_pixel_pair() {
+        // Black in YUY2: Y=0, U=128, V=128
+        let yuy2 = vec![0, 128, 0, 128];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 1);
+        assert_eq!(rgb, vec![0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn yuy2_undersized_buffer_returns_empty() {
+        let result = convert_yuy2_to_rgb(&[0u8; 3], 2, 1);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn yuy2_zero_dimensions_returns_empty() {
+        let result = convert_yuy2_to_rgb(&[], 0, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_yuy2_2x2_produces_correct_size() {
+        // 2x2 image = 2 macro-pixels (one per row)
+        let yuy2 = vec![
+            128, 128, 128, 128, // row 0: grey pair
+            128, 128, 128, 128, // row 1: grey pair
+        ];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 2);
+        assert_eq!(rgb.len(), 2 * 2 * 3); // 12 bytes
     }
 }
