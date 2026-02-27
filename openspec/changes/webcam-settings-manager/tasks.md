@@ -277,3 +277,32 @@
 - [ ] 28.4 Verify hotkey registration on all platforms
 - [ ] 28.5 Verify RTSP camera support on all platforms
 - [ ] 28.6 Performance testing — preview latency, CPU usage, memory footprint on each platform
+
+---
+
+## Future — PTP/MTP camera support
+
+## 29. PTP camera discovery and live view
+
+- [ ] 29.1 Integrate `libgphoto2` into the Rust backend — add `gphoto2` crate (or `libgphoto2-sys` FFI) to dependencies, verify Windows/macOS/Linux builds
+- [ ] 29.2 Implement PTP device discovery — enumerate USB-connected PTP/MTP cameras alongside DirectShow/UVC devices
+- [ ] 29.3 Implement stable PTP device identification — use PTP DeviceInfo serial number + vendor/product IDs for persistent camera IDs
+- [ ] 29.4 Integrate PTP cameras into the unified camera list — both UVC and PTP cameras appear in the sidebar, with PTP cameras labelled as "PTP/Tethered"
+- [ ] 29.5 Implement PTP live view frame capture — initiate live view, capture JPEG frames, push into existing `FrameBuffer` pipeline (skip RGB→JPEG re-encoding)
+- [ ] 29.6 Implement PTP hot-plug detection — detect PTP camera connect/disconnect events
+- [ ] 29.7 Handle WinUSB driver requirement on Windows — detect if camera is claimed by MTP driver, show user guidance for WinUSB setup (Zadig)
+
+## 30. PTP camera controls
+
+- [ ] 30.1 Implement PTP property enumeration — read available camera properties (ISO, shutter speed, aperture, WB mode, exposure compensation) and their allowed values
+- [ ] 30.2 Map PTP properties to `ControlDescriptor` — use `select` type for enumerated values (ISO stops, shutter speeds), `slider` for continuous ranges, `toggle` for modes
+- [ ] 30.3 Implement PTP property read/write — get and set camera settings via PTP device properties in real time
+- [ ] 30.4 Handle PTP-specific control semantics — exposure triangle interdependencies (changing aperture may affect available shutter speeds in certain modes)
+- [ ] 30.5 Add PTP controls to the settings panel — show PTP-specific accordion sections (Exposure, Image Quality) instead of UVC sections
+
+## 31. PTP cross-platform support
+
+- [ ] 31.1 Verify PTP camera support on macOS (libgphoto2 + libusb)
+- [ ] 31.2 Verify PTP camera support on Linux (libgphoto2 — typically best-supported platform)
+- [ ] 31.3 Test with multiple camera models: Canon EOS, Nikon D/Z-series, Sony Alpha, Fujifilm X-series
+- [ ] 31.4 Document supported camera models and known limitations per platform
