@@ -23,6 +23,9 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Vitest
+.vitest-attachments/
+
 # Yarn
 .yarn/*
 !.yarn/patches

@@ -6,3 +6,4 @@ src-tauri/gen
 .husky/_
 .claude
 yarn.lock
+__screenshots__

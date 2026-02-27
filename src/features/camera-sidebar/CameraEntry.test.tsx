@@ -59,12 +59,7 @@ describe('CameraEntry', () => {
 
   it('renders SVG placeholder when thumbnailSrc is null', () => {
     render(
-      <CameraEntry
-        device={device}
-        isSelected={false}
-        onSelect={vi.fn()}
-        thumbnailSrc={null}
-      />,
+      <CameraEntry device={device} isSelected={false} onSelect={vi.fn()} thumbnailSrc={null} />,
     )
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.getByTestId('camera-thumbnail').querySelector('svg')).toBeInTheDocument()

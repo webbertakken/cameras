@@ -1,5 +1,6 @@
+import { playwright } from '@vitest/browser-playwright'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -22,7 +23,38 @@ export default defineConfig(async () => ({
     },
   },
   test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/test-setup.ts'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          setupFiles: ['./src/test-setup.ts'],
+          include: ['src/**/*.test.{ts,tsx}'],
+          exclude: ['src/**/*.visual.test.{ts,tsx}'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'visual',
+          include: ['src/**/*.visual.test.{ts,tsx}'],
+          browser: {
+            enabled: true,
+            provider: playwright({
+              contextOptions: { colorScheme: 'dark' },
+            }),
+            instances: [{ browser: 'chromium' }],
+            orchestratorScripts: [
+              {
+                content: `localStorage.setItem('vueuse-color-scheme', 'dark')`,
+                type: 'module',
+              },
+            ],
+            screenshotFailures: false,
+          },
+        },
+      },
+    ],
   },
 }))

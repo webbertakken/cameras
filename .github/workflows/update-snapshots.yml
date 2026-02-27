@@ -1,0 +1,41 @@
+name: Update snapshots
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  update:
+    name: Update visual baselines
+    if: >
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/update-snapshots')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.issue.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - run: corepack enable && corepack install
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile --immutable
+
+      - name: Install Playwright browsers
+        run: yarn playwright install --with-deps chromium
+
+      - name: Update snapshots
+        run: yarn test:visual -- --update
+
+      - name: Commit updated baselines
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'test: update visual regression baselines'
+          file_pattern: 'src/**/__screenshots__/**/*.png'
