@@ -114,8 +114,15 @@ pub fn run() {
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
+                    tauri_plugin_log::Builder::new()
+                        .targets([
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                                file_name: None,
+                            }),
+                        ])
+                        .level(log::LevelFilter::Debug)
                         .build(),
                 )?;
             }
