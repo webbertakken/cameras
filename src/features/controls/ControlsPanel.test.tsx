@@ -197,6 +197,16 @@ describe('ControlsPanel', () => {
     })
   })
 
+  // --- Empty controls ---
+
+  it('shows "No adjustable controls" when camera returns empty controls', async () => {
+    mockGetControls.mockResolvedValue([])
+    render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
+    await waitFor(() => {
+      expect(screen.getByText(/no adjustable controls/i)).toBeInTheDocument()
+    })
+  })
+
   // --- Camera switching ---
 
   it('shows empty state when no camera is selected', () => {
