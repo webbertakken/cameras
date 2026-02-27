@@ -280,8 +280,6 @@ pub mod directshow {
         buffer: *mut u8,
         buffer_len: i32,
     ) -> HRESULT {
-        println!("[callback] buffer_cb invoked: len={buffer_len}",);
-
         let data = &*(this as *const FrameCallbackData);
 
         if !data.running.load(Ordering::Relaxed) {

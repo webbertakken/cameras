@@ -56,15 +56,12 @@ pub async fn start_preview(
     height: u32,
     fps: f32,
 ) -> Result<(), String> {
-    println!("[preview] start_preview called for device_id={device_id}");
-
     if device_id.is_empty() {
         return Err("device_id must not be empty".to_string());
     }
 
     // Resolve device_id to the actual device path and name needed by DirectShow
     let (device_path, friendly_name) = resolve_device_info(&camera_state, &device_id)?;
-    println!("[preview] resolved device_path={device_path}, name={friendly_name}");
 
     let mut sessions = state.sessions.lock();
     if sessions.contains_key(&device_id) {
@@ -74,7 +71,6 @@ pub async fn start_preview(
     }
 
     let session = CaptureSession::new(device_path, friendly_name, width, height, fps);
-    println!("[preview] session created, capture thread spawned");
     sessions.insert(device_id, session);
     Ok(())
 }
@@ -95,30 +91,15 @@ pub async fn get_frame(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
-    println!("[get_frame] called for device_id={device_id}");
-
     let sessions = state.sessions.lock();
     let session = sessions
         .get(&device_id)
         .ok_or_else(|| "no active preview for this device".to_string())?;
 
-    println!(
-        "[get_frame] session found, is_running={}",
-        session.is_running()
-    );
-
-    let frame = match session.buffer().latest() {
-        Some(f) => f,
-        None => {
-            println!("[get_frame] no frame in buffer");
-            return Err("no frame available".to_string());
-        }
-    };
-
-    println!(
-        "[get_frame] got frame {}x{}, compressing to JPEG",
-        frame.width, frame.height
-    );
+    let frame = session
+        .buffer()
+        .latest()
+        .ok_or_else(|| "no frame available".to_string())?;
 
     let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 85);
     Ok(base64::Engine::encode(
