@@ -150,7 +150,7 @@ pub async fn get_frame(
         }
     }
 
-    let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 85);
+    let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 75);
     let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
 
     // Store in cache

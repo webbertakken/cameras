@@ -31,7 +31,7 @@ function App() {
     prevCameraId.current = cameraId
 
     if (cameraId) {
-      preview.start(1920, 1080, 30).catch((err: unknown) => {
+      preview.start(640, 480, 30).catch((err: unknown) => {
         console.error('Failed to start preview:', err)
       })
     }

@@ -96,8 +96,8 @@ describe('App', () => {
     await vi.waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
         deviceId: 'cam-1',
-        width: 1920,
-        height: 1080,
+        width: 640,
+        height: 480,
         fps: 30,
       })
     })
