@@ -32,7 +32,7 @@ jobs:
         run: yarn playwright install --with-deps chromium
 
       - name: Update snapshots
-        run: yarn test:visual -- --update || true
+        run: yarn vitest run --project visual --update || true
 
       - name: Commit updated baselines
         uses: stefanzweifel/git-auto-commit-action@v5
