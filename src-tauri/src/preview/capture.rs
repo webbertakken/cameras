@@ -7,6 +7,10 @@ use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 
+/// Callback type for reporting capture errors to the frontend.
+/// Arguments: (device_id, error_message).
+pub type ErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// A single captured frame from the camera.
 #[derive(Clone)]
 pub struct Frame {
@@ -75,18 +79,32 @@ pub struct CaptureSession {
     stats: Arc<Mutex<DiagnosticStats>>,
 }
 
+/// Payload emitted via the `preview-error` Tauri event when a capture
+/// graph fails.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewErrorPayload {
+    pub device_id: String,
+    pub error: String,
+}
+
 impl CaptureSession {
     /// Create and start a capture session for the given device.
     ///
     /// On Windows, spawns a thread that builds a DirectShow filter graph
     /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
+    ///
+    /// If `on_error` is provided, it is called with `(device_id, error_msg)`
+    /// when the capture graph fails, allowing the caller to surface errors
+    /// to the frontend.
     pub fn new(
         device_id: String,
         friendly_name: String,
         width: u32,
         height: u32,
         _fps: f32,
+        on_error: Option<ErrorCallback>,
     ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
@@ -116,6 +134,9 @@ impl CaptureSession {
                                 stats_clone,
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
+                                if let Some(cb) = &on_error {
+                                    cb(&device_id_clone, &e);
+                                }
                             }
                             info!("capture thread exiting for {device_id_clone}");
                         })
@@ -133,6 +154,7 @@ impl CaptureSession {
                     stats_clone,
                     width,
                     height,
+                    on_error,
                 );
                 None
             }
@@ -228,18 +250,67 @@ mod tests {
 
     #[test]
     fn capture_session_can_be_created() {
-        let session =
-            CaptureSession::new("test-device".to_string(), String::new(), 1920, 1080, 30.0);
+        let session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            1920,
+            1080,
+            30.0,
+            None,
+        );
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
     }
 
     #[test]
     fn capture_session_stop_is_idempotent() {
-        let mut session =
-            CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
+        let mut session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            640,
+            480,
+            30.0,
+            None,
+        );
         session.stop();
         session.stop(); // Should not panic
+        assert!(!session.is_running());
+    }
+
+    #[test]
+    fn preview_error_payload_serialises_correctly() {
+        let payload = PreviewErrorPayload {
+            device_id: "test-device".to_string(),
+            error: "capture graph failed: 0x800705AA".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["deviceId"], "test-device");
+        assert_eq!(json["error"], "capture graph failed: 0x800705AA");
+    }
+
+    #[test]
+    fn error_callback_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ErrorCallback>();
+    }
+
+    #[test]
+    fn capture_session_with_error_callback() {
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        let on_error: ErrorCallback = Arc::new(move |_device_id, _error| {
+            called_clone.store(true, Ordering::Relaxed);
+        });
+        let session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            640,
+            480,
+            30.0,
+            Some(on_error),
+        );
+        // On non-Windows, no capture thread spawns, so callback won't fire
+        // but the session should still be valid
         assert!(!session.is_running());
     }
 }

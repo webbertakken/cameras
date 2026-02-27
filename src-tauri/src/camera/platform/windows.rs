@@ -224,7 +224,7 @@ impl CameraBackend for WindowsBackend {
         let mut known = self.known_devices.lock().unwrap();
         known.clear();
         for dev in &devices {
-            known.insert(dev.device_path.clone(), dev.clone());
+            known.insert(dev.id.as_str().to_string(), dev.clone());
         }
 
         info!("Enumerated {} camera device(s)", devices.len());
@@ -253,9 +253,10 @@ impl CameraBackend for WindowsBackend {
             .find(|d| &d.id == id)
             .ok_or_else(|| CameraError::DeviceNotFound(id.to_string()))?;
         let device_path = device.device_path.clone();
+        let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { query_device_controls(&device_path) }
+        unsafe { query_device_controls(&device_path, &friendly_name) }
     }
 
     fn get_control(&self, id: &DeviceId, control: &ControlId) -> Result<ControlValue> {
@@ -277,9 +278,10 @@ impl CameraBackend for WindowsBackend {
             .find(|d| &d.id == id)
             .ok_or_else(|| CameraError::DeviceNotFound(id.to_string()))?;
         let device_path = device.device_path.clone();
+        let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { set_device_control(&device_path, control, value) }
+        unsafe { set_device_control(&device_path, &friendly_name, control, value) }
     }
 
     fn get_formats(&self, id: &DeviceId) -> Result<Vec<FormatDescriptor>> {
@@ -289,15 +291,18 @@ impl CameraBackend for WindowsBackend {
             .find(|d| &d.id == id)
             .ok_or_else(|| CameraError::DeviceNotFound(id.to_string()))?;
         let device_path = device.device_path.clone();
+        let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { query_device_formats(&device_path) }
+        unsafe { query_device_formats(&device_path, &friendly_name) }
     }
 }
 
-/// Helper: find a device filter by device path.
+/// Helper: find a device filter by device path, falling back to
+/// friendly name for virtual cameras that lack a DevicePath property.
 unsafe fn find_device_filter(
     device_path: &str,
+    friendly_name: &str,
 ) -> Result<windows::Win32::Media::DirectShow::IBaseFilter> {
     use windows::Win32::Media::DirectShow::ICreateDevEnum;
     use windows::Win32::System::Com::IMoniker;
@@ -314,7 +319,9 @@ unsafe fn find_device_filter(
         .map_err(|e| CameraError::Enumeration(format!("CreateClassEnumerator failed: {e}")))?;
 
     let Some(enum_moniker) = enum_moniker else {
-        return Err(CameraError::DeviceNotFound(device_path.to_string()));
+        return Err(CameraError::DeviceNotFound(format!(
+            "path={device_path}, name={friendly_name}"
+        )));
     };
 
     let mut moniker_array = [None; 1];
@@ -338,7 +345,20 @@ unsafe fn find_device_filter(
         };
 
         let path = read_property_string(&bag, "DevicePath").unwrap_or_default();
-        if path != device_path {
+        let name = read_property_string(&bag, "FriendlyName").unwrap_or_default();
+
+        // Match by device path first, fall back to friendly name for
+        // virtual cameras that may not have a DevicePath property.
+        let matched = if !device_path.is_empty() && path == device_path {
+            true
+        } else if !friendly_name.is_empty() && path.is_empty() && name == friendly_name {
+            info!("matched device by FriendlyName: {name}");
+            true
+        } else {
+            false
+        };
+
+        if !matched {
             continue;
         }
 
@@ -352,7 +372,9 @@ unsafe fn find_device_filter(
         return Ok(filter);
     }
 
-    Err(CameraError::DeviceNotFound(device_path.to_string()))
+    Err(CameraError::DeviceNotFound(format!(
+        "path={device_path}, name={friendly_name}"
+    )))
 }
 
 /// All IAMCameraControl property variants (indices 0-6).
@@ -415,8 +437,11 @@ fn flags_to_control_flags(caps_flags: i32, cur_flags: i32) -> ControlFlags {
 ///
 /// # Safety
 /// Calls COM APIs.
-unsafe fn query_device_controls(device_path: &str) -> Result<Vec<ControlDescriptor>> {
-    let filter = find_device_filter(device_path)?;
+unsafe fn query_device_controls(
+    device_path: &str,
+    friendly_name: &str,
+) -> Result<Vec<ControlDescriptor>> {
+    let filter = find_device_filter(device_path, friendly_name)?;
     let mut controls = Vec::new();
 
     // Query IAMCameraControl (properties 0-6)
@@ -552,11 +577,12 @@ fn make_control_descriptor(data: RawControlData) -> ControlDescriptor {
 /// Calls COM APIs.
 unsafe fn set_device_control(
     device_path: &str,
+    friendly_name: &str,
     control: &ControlId,
     value: ControlValue,
 ) -> Result<()> {
     let name = control.display_name();
-    let filter = find_device_filter(device_path).map_err(|e| {
+    let filter = find_device_filter(device_path, friendly_name).map_err(|e| {
         CameraError::ControlWrite(format!("Failed to set {name}: device not found ({e})"))
     })?;
 
@@ -597,12 +623,15 @@ unsafe fn set_device_control(
 ///
 /// # Safety
 /// Calls COM APIs.
-unsafe fn query_device_formats(device_path: &str) -> Result<Vec<FormatDescriptor>> {
+unsafe fn query_device_formats(
+    device_path: &str,
+    friendly_name: &str,
+) -> Result<Vec<FormatDescriptor>> {
     use windows::Win32::Media::DirectShow::IAMStreamConfig;
     use windows::Win32::Media::MediaFoundation::{FORMAT_VideoInfo, VIDEOINFOHEADER};
 
-    let filter =
-        find_device_filter(device_path).map_err(|e| CameraError::FormatQuery(e.to_string()))?;
+    let filter = find_device_filter(device_path, friendly_name)
+        .map_err(|e| CameraError::FormatQuery(e.to_string()))?;
 
     let pin_enum = filter
         .EnumPins()
@@ -755,7 +784,7 @@ fn handle_device_change(ctx: &HotplugContext) {
         .iter()
         .map(|raw| {
             let dev = WindowsBackend::make_device(raw);
-            (dev.device_path.clone(), dev)
+            (dev.id.as_str().to_string(), dev)
         })
         .collect();
 
@@ -991,6 +1020,60 @@ mod tests {
             device.id.as_str().starts_with("name:"),
             "Empty path should produce name-based ID"
         );
+    }
+
+    #[test]
+    fn enumerate_stores_virtual_cameras_by_id() {
+        let backend = WindowsBackend::with_enumerator(Box::new(MockEnumerator {
+            devices: vec![
+                RawDeviceInfo {
+                    friendly_name: "OBS Virtual Camera".to_string(),
+                    device_path: String::new(),
+                },
+                RawDeviceInfo {
+                    friendly_name: "GoPro Webcam".to_string(),
+                    device_path: String::new(),
+                },
+            ],
+        }));
+
+        let devices = backend.enumerate_devices().unwrap();
+        assert_eq!(devices.len(), 2);
+
+        // Both virtual cameras should be stored separately despite empty paths
+        let known = backend.known_devices.lock().unwrap();
+        assert_eq!(
+            known.len(),
+            2,
+            "Both virtual cameras should have unique keys"
+        );
+    }
+
+    #[test]
+    fn get_controls_resolves_friendly_name_for_virtual_camera() {
+        let backend = WindowsBackend::with_enumerator(Box::new(MockEnumerator {
+            devices: vec![RawDeviceInfo {
+                friendly_name: "OBS Virtual Camera".to_string(),
+                device_path: String::new(),
+            }],
+        }));
+
+        let devices = backend.enumerate_devices().unwrap();
+        let id = &devices[0].id;
+
+        // The backend should find the device by ID and pass both
+        // device_path and friendly_name to the COM function.
+        // Since we can't mock COM here, just verify the lookup succeeds
+        // and the device is found in known_devices.
+        let known = backend.known_devices.lock().unwrap();
+        let device = known.values().find(|d| &d.id == id);
+        assert!(device.is_some(), "Virtual camera should be found by ID");
+        let device = device.unwrap();
+        assert!(
+            device.device_path.is_empty(),
+            "Virtual camera should have empty device_path"
+        );
+        assert_eq!(device.name, "OBS Virtual Camera");
     }
 
     #[test]

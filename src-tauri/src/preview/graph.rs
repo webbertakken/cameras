@@ -12,7 +12,8 @@ pub mod directshow {
     use tracing::{debug, error, info, trace, warn};
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
-        IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl, IPin,
+        IAMStreamConfig, IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl,
+        IPin,
     };
     use windows::Win32::Media::MediaFoundation::VIDEOINFOHEADER;
     use windows::Win32::Media::MediaFoundation::{
@@ -408,6 +409,164 @@ pub mod directshow {
         }
     }
 
+    /// Configure the source filter's output pin to request a specific resolution.
+    ///
+    /// Enumerates the pin's stream capabilities via IAMStreamConfig, picks the
+    /// best match for the requested width/height, and calls SetFormat. If no
+    /// suitable format is found or the pin doesn't support IAMStreamConfig, the
+    /// function logs a warning and returns without error — the graph will fall
+    /// back to the camera's default resolution.
+    unsafe fn configure_source_resolution(source: &IBaseFilter, width: u32, height: u32) {
+        use windows::Win32::Media::MediaFoundation::FORMAT_VideoInfo;
+
+        let pin_enum = match source.EnumPins() {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("EnumPins failed when configuring resolution: {e}");
+                return;
+            }
+        };
+
+        let mut pin_array = [None; 1];
+
+        // Find the first output pin with IAMStreamConfig
+        loop {
+            let hr = pin_enum.Next(&mut pin_array, None);
+            if hr.is_err() {
+                break;
+            }
+
+            let Some(pin) = pin_array[0].take() else {
+                break;
+            };
+
+            let dir = match pin.QueryDirection() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // PINDIR_OUTPUT = 1
+            if dir.0 != 1 {
+                continue;
+            }
+
+            let Ok(stream_config) = pin.cast::<IAMStreamConfig>() else {
+                continue;
+            };
+
+            let mut count = 0i32;
+            let mut size = 0i32;
+            if stream_config
+                .GetNumberOfCapabilities(&mut count, &mut size)
+                .is_err()
+            {
+                continue;
+            }
+
+            let target_pixels = (width as u64) * (height as u64);
+            let mut best_index: Option<i32> = None;
+            let mut best_diff: u64 = u64::MAX;
+
+            for i in 0..count {
+                let mut scc = vec![0u8; size as usize];
+                let mut mt_ptr = std::ptr::null_mut();
+                if stream_config
+                    .GetStreamCaps(i, &mut mt_ptr, scc.as_mut_ptr())
+                    .is_err()
+                {
+                    continue;
+                }
+
+                if mt_ptr.is_null() {
+                    continue;
+                }
+
+                let mt_ref = &*mt_ptr;
+                let mut cap_w = 0u32;
+                let mut cap_h = 0u32;
+
+                if mt_ref.formattype == FORMAT_VideoInfo
+                    && !mt_ref.pbFormat.is_null()
+                    && mt_ref.cbFormat as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+                {
+                    let vih: &VIDEOINFOHEADER = &*(mt_ref.pbFormat as *const VIDEOINFOHEADER);
+                    cap_w = vih.bmiHeader.biWidth as u32;
+                    cap_h = vih.bmiHeader.biHeight.unsigned_abs();
+                }
+
+                // Free the AM_MEDIA_TYPE
+                if !mt_ref.pbFormat.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(Some(mt_ref.pbFormat.cast()));
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(
+                    (mt_ptr as *mut core::ffi::c_void).cast(),
+                ));
+
+                if cap_w == 0 || cap_h == 0 {
+                    continue;
+                }
+
+                let cap_pixels = (cap_w as u64) * (cap_h as u64);
+                let diff = cap_pixels.abs_diff(target_pixels);
+                if diff < best_diff {
+                    best_diff = diff;
+                    best_index = Some(i);
+                }
+            }
+
+            if let Some(idx) = best_index {
+                let mut scc = vec![0u8; size as usize];
+                let mut mt_ptr = std::ptr::null_mut();
+                if stream_config
+                    .GetStreamCaps(idx, &mut mt_ptr, scc.as_mut_ptr())
+                    .is_ok()
+                    && !mt_ptr.is_null()
+                {
+                    let mt_ref = &*mt_ptr;
+                    let mut fmt_w = 0u32;
+                    let mut fmt_h = 0u32;
+                    if mt_ref.formattype == FORMAT_VideoInfo
+                        && !mt_ref.pbFormat.is_null()
+                        && mt_ref.cbFormat as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+                    {
+                        let vih: &VIDEOINFOHEADER = &*(mt_ref.pbFormat as *const VIDEOINFOHEADER);
+                        fmt_w = vih.bmiHeader.biWidth as u32;
+                        fmt_h = vih.bmiHeader.biHeight.unsigned_abs();
+                    }
+
+                    match stream_config.SetFormat(mt_ptr) {
+                        Ok(()) => {
+                            info!(
+                                "configured source resolution to {fmt_w}x{fmt_h} \
+                                 (requested {width}x{height})"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "SetFormat({fmt_w}x{fmt_h}) failed: {e}, \
+                                 falling back to camera default"
+                            );
+                        }
+                    }
+
+                    // Free the AM_MEDIA_TYPE
+                    if !mt_ref.pbFormat.is_null() {
+                        windows::Win32::System::Com::CoTaskMemFree(Some(mt_ref.pbFormat.cast()));
+                    }
+                    windows::Win32::System::Com::CoTaskMemFree(Some(
+                        (mt_ptr as *mut core::ffi::c_void).cast(),
+                    ));
+                }
+            } else {
+                warn!("no stream capabilities found, using camera default resolution");
+            }
+
+            return;
+        }
+
+        warn!("no output pin with IAMStreamConfig found, using camera default resolution");
+    }
+
     /// Find a DirectShow source filter by device path, falling back to
     /// friendly name for virtual cameras that lack a DevicePath property.
     unsafe fn find_source_filter(
@@ -518,8 +677,8 @@ pub mod directshow {
     pub fn run_capture_graph(
         device_path: &str,
         friendly_name: &str,
-        _width: u32,
-        _height: u32,
+        width: u32,
+        height: u32,
         buffer: Arc<FrameBuffer>,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
@@ -551,6 +710,13 @@ pub mod directshow {
                     error!("failed to add source filter: {e}");
                     format!("failed to add source filter: {e}")
                 })?;
+
+            // 2b. Configure the source output pin resolution via IAMStreamConfig.
+            //     This requests the camera to output at the desired resolution
+            //     rather than defaulting to its maximum (e.g. 1920x1080).
+            if width > 0 && height > 0 {
+                configure_source_resolution(&source, width, height);
+            }
 
             // 3. Create and add SampleGrabber filter
             let grabber_filter: IBaseFilter =
@@ -685,9 +851,9 @@ pub mod directshow {
             } else {
                 warn!(
                     "could not query connected media type (hr={hr:?}), \
-                     falling back to requested {_width}x{_height}"
+                     falling back to requested {width}x{height}"
                 );
-                (_width, _height, MEDIASUBTYPE_RGB24)
+                (width, height, MEDIASUBTYPE_RGB24)
             };
 
             // Free the format block if allocated

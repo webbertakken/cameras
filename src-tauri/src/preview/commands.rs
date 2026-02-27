@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
-use super::capture::CaptureSession;
+use super::capture::{CaptureSession, PreviewErrorPayload};
 use super::compress;
 use crate::camera::commands::CameraState;
 use crate::camera::types::DeviceId;
@@ -49,6 +50,7 @@ fn resolve_device_info(
 /// Start a camera preview session.
 #[tauri::command]
 pub async fn start_preview(
+    app: AppHandle,
     state: State<'_, PreviewState>,
     camera_state: State<'_, CameraState>,
     device_id: String,
@@ -70,7 +72,27 @@ pub async fn start_preview(
         }
     }
 
-    let session = CaptureSession::new(device_path, friendly_name, width, height, fps);
+    let on_error = {
+        let app = app.clone();
+        Arc::new(move |device_id: &str, error: &str| {
+            let _ = app.emit(
+                "preview-error",
+                PreviewErrorPayload {
+                    device_id: device_id.to_string(),
+                    error: error.to_string(),
+                },
+            );
+        }) as super::capture::ErrorCallback
+    };
+
+    let session = CaptureSession::new(
+        device_path,
+        friendly_name,
+        width,
+        height,
+        fps,
+        Some(on_error),
+    );
     sessions.insert(device_id, session);
     Ok(())
 }
@@ -180,8 +202,14 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
+            let session = CaptureSession::new(
+                "test-device".to_string(),
+                String::new(),
+                640,
+                480,
+                30.0,
+                None,
+            );
             sessions.insert("test-device".to_string(), session);
         }
         let sessions = state.sessions.lock();
@@ -193,8 +221,14 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
+            let session = CaptureSession::new(
+                "test-device".to_string(),
+                String::new(),
+                640,
+                480,
+                30.0,
+                None,
+            );
             sessions.insert("test-device".to_string(), session);
         }
         {
@@ -222,7 +256,7 @@ mod tests {
         {
             let mut sessions = state.sessions.lock();
             let session =
-                CaptureSession::new("test-device".to_string(), String::new(), 10, 10, 30.0);
+                CaptureSession::new("test-device".to_string(), String::new(), 10, 10, 30.0, None);
             session.buffer().push(frame);
             sessions.insert("test-device".to_string(), session);
         }
@@ -247,5 +281,19 @@ mod tests {
         let sessions = state.sessions.lock();
         let result = sessions.get("nonexistent");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn preview_error_payload_has_camel_case_keys() {
+        let payload = PreviewErrorPayload {
+            device_id: "cam-1".to_string(),
+            error: "resource busy".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("deviceId"), "expected camelCase key: {json}");
+        assert!(
+            !json.contains("device_id"),
+            "expected no snake_case key: {json}"
+        );
     }
 }
