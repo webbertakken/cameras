@@ -219,6 +219,7 @@ pub mod directshow {
         buffer: Arc<FrameBuffer>,
         width: u32,
         height: u32,
+        sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
     }
@@ -279,10 +280,7 @@ pub mod directshow {
         buffer: *mut u8,
         buffer_len: i32,
     ) -> HRESULT {
-        println!(
-            "[callback] buffer_cb called: time={sample_time}, buffer_null={}, len={buffer_len}",
-            buffer.is_null()
-        );
+        println!("[callback] buffer_cb invoked: len={buffer_len}",);
 
         let data = &*(this as *const FrameCallbackData);
 
@@ -298,42 +296,52 @@ pub mod directshow {
 
         let len = buffer_len as usize;
         let raw = std::slice::from_raw_parts(buffer, len);
-
-        // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
-        let width = data.width as usize;
-        let height = data.height as usize;
-        let stride = width * 3;
-        let expected = stride * height;
-
-        if len < expected {
-            warn!(
-                "frame size mismatch: got {len} bytes, expected {expected} ({}x{})",
-                width, height
-            );
-            data.stats.lock().record_drop();
-            return HRESULT(0);
-        }
-
-        let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
-
-        println!(
-            "[callback] pushing frame {}x{} ({} bytes)",
-            data.width,
-            data.height,
-            rgb.len()
-        );
-
         let timestamp_us = (sample_time * 1_000_000.0) as u64;
-        let frame_bytes = rgb.len();
 
-        data.buffer.push(Frame {
-            data: rgb,
-            width: data.width,
-            height: data.height,
-            timestamp_us,
-        });
+        if data.sub_type == MEDIASUBTYPE_RGB24 {
+            // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
+            let width = data.width as usize;
+            let height = data.height as usize;
+            let stride = width * 3;
+            let expected = stride * height;
 
-        data.stats.lock().record_frame(frame_bytes, timestamp_us);
+            if len < expected {
+                warn!(
+                    "frame size mismatch: got {len} bytes, expected {expected} ({}x{})",
+                    width, height
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+
+            let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
+            let frame_bytes = rgb.len();
+
+            data.buffer.push(Frame {
+                data: rgb,
+                width: data.width,
+                height: data.height,
+                timestamp_us,
+            });
+
+            data.stats.lock().record_frame(frame_bytes, timestamp_us);
+        } else {
+            // Unknown/unsupported format — push raw data so we can verify
+            // frames arrive. Proper YUY2/NV12 conversion can be added later.
+            warn!(
+                "unsupported sub_type {:?}, pushing raw data ({len} bytes)",
+                data.sub_type
+            );
+
+            data.buffer.push(Frame {
+                data: raw.to_vec(),
+                width: data.width,
+                height: data.height,
+                timestamp_us,
+            });
+
+            data.stats.lock().record_frame(len, timestamp_us);
+        }
 
         HRESULT(0)
     }
@@ -344,6 +352,7 @@ pub mod directshow {
         buffer: Arc<FrameBuffer>,
         width: u32,
         height: u32,
+        sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
     ) -> *mut core::ffi::c_void {
@@ -353,6 +362,7 @@ pub mod directshow {
             buffer,
             width,
             height,
+            sub_type,
             running,
             stats,
         });
@@ -382,8 +392,12 @@ pub mod directshow {
         }
     }
 
-    /// Find a DirectShow source filter by device path.
-    unsafe fn find_source_filter(device_path: &str) -> Result<IBaseFilter, String> {
+    /// Find a DirectShow source filter by device path, falling back to
+    /// friendly name for virtual cameras that lack a DevicePath property.
+    unsafe fn find_source_filter(
+        device_path: &str,
+        friendly_name: &str,
+    ) -> Result<IBaseFilter, String> {
         use windows::Win32::System::Com::IMoniker;
 
         let dev_enum: ICreateDevEnum =
@@ -420,7 +434,20 @@ pub mod directshow {
             };
 
             let path = read_property_string(&bag, "DevicePath").unwrap_or_default();
-            if path != device_path {
+            let name = read_property_string(&bag, "FriendlyName").unwrap_or_default();
+
+            // Match by device path first, fall back to friendly name for
+            // virtual cameras that may not have a DevicePath property.
+            let matched = if !device_path.is_empty() && path == device_path {
+                true
+            } else if !friendly_name.is_empty() && path.is_empty() && name == friendly_name {
+                info!("matched virtual camera by FriendlyName: {name}");
+                true
+            } else {
+                false
+            };
+
+            if !matched {
                 continue;
             }
 
@@ -434,7 +461,9 @@ pub mod directshow {
             return Ok(filter);
         }
 
-        Err(format!("device not found: {device_path}"))
+        Err(format!(
+            "device not found: path={device_path}, name={friendly_name}"
+        ))
     }
 
     /// Read a string property from an IPropertyBag.
@@ -472,6 +501,7 @@ pub mod directshow {
     /// capture thread.
     pub fn run_capture_graph(
         device_path: &str,
+        friendly_name: &str,
         _width: u32,
         _height: u32,
         buffer: Arc<FrameBuffer>,
@@ -495,7 +525,7 @@ pub mod directshow {
             })?;
 
             // 2. Find and add source filter
-            let source = find_source_filter(device_path).map_err(|e| {
+            let source = find_source_filter(device_path, friendly_name).map_err(|e| {
                 error!("failed to find source filter for {device_path}: {e}");
                 e
             })?;
@@ -530,8 +560,8 @@ pub mod directshow {
 
             let mt = AmMediaType {
                 major_type: MEDIATYPE_VIDEO,
-                sub_type: MEDIASUBTYPE_RGB24,
-                format_type: FORMAT_VIDEOINFO,
+                sub_type: GUID::zeroed(),    // Accept any video subtype
+                format_type: GUID::zeroed(), // Accept any format type
                 ..AmMediaType::default()
             };
 
@@ -592,22 +622,28 @@ pub mod directshow {
             //    than what was requested.
             let mut connected_mt = AmMediaType::default();
             let hr = grabber.get_connected_media_type(&mut connected_mt);
-            let (actual_width, actual_height) = if hr.is_ok()
-                && connected_mt.format_type == FORMAT_VIDEOINFO
+
+            info!(
+                "negotiated sub_type: {:?}, format_type: {:?}",
+                connected_mt.sub_type, connected_mt.format_type
+            );
+
+            let (actual_width, actual_height, actual_sub_type) = if hr.is_ok()
                 && !connected_mt.pb_format.is_null()
                 && connected_mt.cb_format as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
             {
                 let vih = &*(connected_mt.pb_format as *const VIDEOINFOHEADER);
                 let w = vih.bmiHeader.biWidth as u32;
                 let h = vih.bmiHeader.biHeight.unsigned_abs();
+                let sub = connected_mt.sub_type;
                 info!("negotiated resolution: {w}x{h}");
-                (w, h)
+                (w, h, sub)
             } else {
                 warn!(
                     "could not query connected media type (hr={hr:?}), \
                      falling back to requested {_width}x{_height}"
                 );
-                (_width, _height)
+                (_width, _height, MEDIASUBTYPE_RGB24)
             };
 
             // Free the format block if allocated
@@ -622,6 +658,7 @@ pub mod directshow {
                 buffer,
                 actual_width,
                 actual_height,
+                actual_sub_type,
                 Arc::clone(&running),
                 stats,
             );

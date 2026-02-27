@@ -28,8 +28,11 @@ impl Default for PreviewState {
     }
 }
 
-/// Resolve device_id to device_path via the camera backend.
-fn resolve_device_path(camera_state: &CameraState, device_id: &str) -> Result<String, String> {
+/// Resolve device_id to (device_path, friendly_name) via the camera backend.
+fn resolve_device_info(
+    camera_state: &CameraState,
+    device_id: &str,
+) -> Result<(String, String), String> {
     let devices = camera_state
         .backend
         .enumerate_devices()
@@ -39,7 +42,7 @@ fn resolve_device_path(camera_state: &CameraState, device_id: &str) -> Result<St
     devices
         .iter()
         .find(|d| d.id == target_id)
-        .map(|d| d.device_path.clone())
+        .map(|d| (d.device_path.clone(), d.name.clone()))
         .ok_or_else(|| format!("device not found: {device_id}"))
 }
 
@@ -59,9 +62,9 @@ pub async fn start_preview(
         return Err("device_id must not be empty".to_string());
     }
 
-    // Resolve device_id to the actual device path needed by DirectShow
-    let device_path = resolve_device_path(&camera_state, &device_id)?;
-    println!("[preview] resolved device_path={device_path}");
+    // Resolve device_id to the actual device path and name needed by DirectShow
+    let (device_path, friendly_name) = resolve_device_info(&camera_state, &device_id)?;
+    println!("[preview] resolved device_path={device_path}, name={friendly_name}");
 
     let mut sessions = state.sessions.lock();
     if sessions.contains_key(&device_id) {
@@ -70,7 +73,7 @@ pub async fn start_preview(
         }
     }
 
-    let session = CaptureSession::new(device_path, width, height, fps);
+    let session = CaptureSession::new(device_path, friendly_name, width, height, fps);
     println!("[preview] session created, capture thread spawned");
     sessions.insert(device_id, session);
     Ok(())
@@ -196,7 +199,8 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session = CaptureSession::new("test-device".to_string(), 640, 480, 30.0);
+            let session =
+                CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
             sessions.insert("test-device".to_string(), session);
         }
         let sessions = state.sessions.lock();
@@ -208,7 +212,8 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session = CaptureSession::new("test-device".to_string(), 640, 480, 30.0);
+            let session =
+                CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
             sessions.insert("test-device".to_string(), session);
         }
         {
@@ -235,7 +240,8 @@ mod tests {
         let frame = make_rgb_frame(10, 10);
         {
             let mut sessions = state.sessions.lock();
-            let session = CaptureSession::new("test-device".to_string(), 10, 10, 30.0);
+            let session =
+                CaptureSession::new("test-device".to_string(), String::new(), 10, 10, 30.0);
             session.buffer().push(frame);
             sessions.insert("test-device".to_string(), session);
         }

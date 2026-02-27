@@ -81,13 +81,20 @@ impl CaptureSession {
     /// On Windows, spawns a thread that builds a DirectShow filter graph
     /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
-    pub fn new(device_id: String, width: u32, height: u32, _fps: f32) -> Self {
+    pub fn new(
+        device_id: String,
+        friendly_name: String,
+        width: u32,
+        height: u32,
+        _fps: f32,
+    ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
 
         let thread = {
             let device_id_clone = device_id.clone();
+            let friendly_name_clone = friendly_name;
             let buffer_clone = Arc::clone(&buffer);
             let running_clone = Arc::clone(&running);
             let stats_clone = Arc::clone(&stats);
@@ -101,6 +108,7 @@ impl CaptureSession {
                             info!("capture thread starting for {device_id_clone}");
                             if let Err(e) = super::graph::directshow::run_capture_graph(
                                 &device_id_clone,
+                                &friendly_name_clone,
                                 width,
                                 height,
                                 buffer_clone,
@@ -119,6 +127,7 @@ impl CaptureSession {
             {
                 let _ = (
                     device_id_clone,
+                    friendly_name_clone,
                     buffer_clone,
                     running_clone,
                     stats_clone,
@@ -219,14 +228,16 @@ mod tests {
 
     #[test]
     fn capture_session_can_be_created() {
-        let session = CaptureSession::new("test-device".to_string(), 1920, 1080, 30.0);
+        let session =
+            CaptureSession::new("test-device".to_string(), String::new(), 1920, 1080, 30.0);
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
     }
 
     #[test]
     fn capture_session_stop_is_idempotent() {
-        let mut session = CaptureSession::new("test-device".to_string(), 640, 480, 30.0);
+        let mut session =
+            CaptureSession::new("test-device".to_string(), String::new(), 640, 480, 30.0);
         session.stop();
         session.stop(); // Should not panic
         assert!(!session.is_running());
