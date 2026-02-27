@@ -7,10 +7,13 @@ use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 
+/// Callback type for reporting capture errors to the frontend.
+/// Arguments: (device_id, error_message).
+pub type ErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// A single captured frame from the camera.
-#[derive(Clone)]
 pub struct Frame {
-    /// Raw pixel data (RGB) or compressed JPEG bytes.
+    /// Raw pixel data (RGB).
     pub data: Vec<u8>,
     /// Frame width in pixels.
     pub width: u32,
@@ -23,9 +26,10 @@ pub struct Frame {
 /// Thread-safe ring buffer for camera frames.
 ///
 /// Stores up to `capacity` frames, overwriting the oldest when full.
-/// Designed for a single-producer (capture thread) / single-consumer (IPC) pattern.
+/// Frames are wrapped in `Arc` so consumers get a cheap reference-counted
+/// pointer instead of cloning multi-megabyte pixel buffers.
 pub struct FrameBuffer {
-    frames: Mutex<Vec<Option<Frame>>>,
+    frames: Mutex<Vec<Option<Arc<Frame>>>>,
     capacity: usize,
     write_idx: Mutex<usize>,
 }
@@ -45,15 +49,17 @@ impl FrameBuffer {
     pub fn push(&self, frame: Frame) {
         let mut frames = self.frames.lock();
         let mut idx = self.write_idx.lock();
-        frames[*idx] = Some(frame);
+        frames[*idx] = Some(Arc::new(frame));
         *idx = (*idx + 1) % self.capacity;
     }
 
     /// Get the most recently pushed frame, if any.
-    pub fn latest(&self) -> Option<Frame> {
+    ///
+    /// Returns an `Arc<Frame>` — a cheap clone of a reference-counted pointer
+    /// rather than copying the entire pixel buffer.
+    pub fn latest(&self) -> Option<Arc<Frame>> {
         let frames = self.frames.lock();
         let idx = self.write_idx.lock();
-        // The latest frame is at (write_idx - 1) mod capacity
         if self.capacity == 0 {
             return None;
         }
@@ -75,19 +81,40 @@ pub struct CaptureSession {
     stats: Arc<Mutex<DiagnosticStats>>,
 }
 
+/// Payload emitted via the `preview-error` Tauri event when a capture
+/// graph fails.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewErrorPayload {
+    pub device_id: String,
+    pub error: String,
+}
+
 impl CaptureSession {
     /// Create and start a capture session for the given device.
     ///
     /// On Windows, spawns a thread that builds a DirectShow filter graph
     /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
-    pub fn new(device_id: String, width: u32, height: u32, _fps: f32) -> Self {
+    ///
+    /// If `on_error` is provided, it is called with `(device_id, error_msg)`
+    /// when the capture graph fails, allowing the caller to surface errors
+    /// to the frontend.
+    pub fn new(
+        device_id: String,
+        friendly_name: String,
+        width: u32,
+        height: u32,
+        _fps: f32,
+        on_error: Option<ErrorCallback>,
+    ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
 
         let thread = {
             let device_id_clone = device_id.clone();
+            let friendly_name_clone = friendly_name;
             let buffer_clone = Arc::clone(&buffer);
             let running_clone = Arc::clone(&running);
             let stats_clone = Arc::clone(&stats);
@@ -101,6 +128,7 @@ impl CaptureSession {
                             info!("capture thread starting for {device_id_clone}");
                             if let Err(e) = super::graph::directshow::run_capture_graph(
                                 &device_id_clone,
+                                &friendly_name_clone,
                                 width,
                                 height,
                                 buffer_clone,
@@ -108,6 +136,9 @@ impl CaptureSession {
                                 stats_clone,
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
+                                if let Some(cb) = &on_error {
+                                    cb(&device_id_clone, &e);
+                                }
                             }
                             info!("capture thread exiting for {device_id_clone}");
                         })
@@ -119,11 +150,13 @@ impl CaptureSession {
             {
                 let _ = (
                     device_id_clone,
+                    friendly_name_clone,
                     buffer_clone,
                     running_clone,
                     stats_clone,
                     width,
                     height,
+                    on_error,
                 );
                 None
             }
@@ -218,17 +251,81 @@ mod tests {
     }
 
     #[test]
+    fn frame_buffer_latest_returns_arc_not_clone() {
+        let buf = FrameBuffer::new(3);
+        buf.push(make_frame(42, 100));
+
+        let a = buf.latest().unwrap();
+        let b = buf.latest().unwrap();
+
+        // Both should point to the same allocation — no deep copy
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(a.data[0], 42);
+    }
+
+    #[test]
     fn capture_session_can_be_created() {
-        let session = CaptureSession::new("test-device".to_string(), 1920, 1080, 30.0);
+        let session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            1920,
+            1080,
+            30.0,
+            None,
+        );
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
     }
 
     #[test]
     fn capture_session_stop_is_idempotent() {
-        let mut session = CaptureSession::new("test-device".to_string(), 640, 480, 30.0);
+        let mut session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            640,
+            480,
+            30.0,
+            None,
+        );
         session.stop();
         session.stop(); // Should not panic
+        assert!(!session.is_running());
+    }
+
+    #[test]
+    fn preview_error_payload_serialises_correctly() {
+        let payload = PreviewErrorPayload {
+            device_id: "test-device".to_string(),
+            error: "capture graph failed: 0x800705AA".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["deviceId"], "test-device");
+        assert_eq!(json["error"], "capture graph failed: 0x800705AA");
+    }
+
+    #[test]
+    fn error_callback_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ErrorCallback>();
+    }
+
+    #[test]
+    fn capture_session_with_error_callback() {
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        let on_error: ErrorCallback = Arc::new(move |_device_id, _error| {
+            called_clone.store(true, Ordering::Relaxed);
+        });
+        let session = CaptureSession::new(
+            "test-device".to_string(),
+            String::new(),
+            640,
+            480,
+            30.0,
+            Some(on_error),
+        );
+        // On non-Windows, no capture thread spawns, so callback won't fire
+        // but the session should still be valid
         assert!(!session.is_running());
     }
 }

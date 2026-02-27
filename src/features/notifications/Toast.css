@@ -35,6 +35,10 @@
   border-left: 3px solid var(--colour-accent);
 }
 
+.toast--error {
+  border-left: 3px solid var(--colour-error);
+}
+
 .toast__message {
   flex: 1;
 }

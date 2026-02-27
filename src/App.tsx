@@ -49,7 +49,11 @@ function App() {
       <main className="app-main">
         {selectedCamera ? (
           <>
-            <PreviewCanvas frameSrc={preview.frameSrc} />
+            <PreviewCanvas
+              frameSrc={preview.frameSrc}
+              isLoading={preview.isActive && !preview.frameSrc}
+              error={preview.error}
+            />
             <ControlsPanel cameraId={selectedCamera.id} cameraName={selectedCamera.name} />
           </>
         ) : (

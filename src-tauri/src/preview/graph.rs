@@ -9,10 +9,11 @@ pub mod directshow {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info, trace, warn};
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
-        IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl, IPin,
+        IAMStreamConfig, IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl,
+        IPin,
     };
     use windows::Win32::Media::MediaFoundation::VIDEOINFOHEADER;
     use windows::Win32::Media::MediaFoundation::{
@@ -27,7 +28,9 @@ pub mod directshow {
 
     use crate::diagnostics::stats::DiagnosticStats;
     use crate::preview::capture::{Frame, FrameBuffer};
-    use crate::preview::graph::convert_bgr_bottom_up_to_rgb;
+    use crate::preview::graph::{
+        convert_bgr_bottom_up_to_rgb, convert_nv12_to_rgb, convert_yuy2_to_rgb,
+    };
 
     // --- Manually defined types not in windows-rs metadata ---
 
@@ -88,6 +91,12 @@ pub mod directshow {
 
     // MEDIASUBTYPE_RGB24: {e436eb7d-524f-11ce-9f53-0020af0ba770}
     const MEDIASUBTYPE_RGB24: GUID = GUID::from_u128(0xe436eb7d_524f_11ce_9f53_0020af0ba770);
+
+    // MEDIASUBTYPE_YUY2: {32595559-0000-0010-8000-00AA00389B71}
+    const MEDIASUBTYPE_YUY2: GUID = GUID::from_u128(0x32595559_0000_0010_8000_00AA00389B71);
+
+    // MEDIASUBTYPE_NV12: {3231564E-0000-0010-8000-00AA00389B71}
+    const MEDIASUBTYPE_NV12: GUID = GUID::from_u128(0x3231564E_0000_0010_8000_00AA00389B71);
 
     // FORMAT_VideoInfo: {05589F80-C356-11CE-BF01-00AA0055595A}
     const FORMAT_VIDEOINFO: GUID = GUID::from_u128(0x05589f80_c356_11ce_bf01_00aa0055595a);
@@ -219,6 +228,7 @@ pub mod directshow {
         buffer: Arc<FrameBuffer>,
         width: u32,
         height: u32,
+        sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
     }
@@ -279,11 +289,6 @@ pub mod directshow {
         buffer: *mut u8,
         buffer_len: i32,
     ) -> HRESULT {
-        println!(
-            "[callback] buffer_cb called: time={sample_time}, buffer_null={}, len={buffer_len}",
-            buffer.is_null()
-        );
-
         let data = &*(this as *const FrameCallbackData);
 
         if !data.running.load(Ordering::Relaxed) {
@@ -298,41 +303,61 @@ pub mod directshow {
 
         let len = buffer_len as usize;
         let raw = std::slice::from_raw_parts(buffer, len);
+        let timestamp_us = (sample_time * 1_000_000.0) as u64;
 
-        // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
         let width = data.width as usize;
         let height = data.height as usize;
-        let stride = width * 3;
-        let expected = stride * height;
 
-        if len < expected {
+        let rgb = if data.sub_type == MEDIASUBTYPE_RGB24 {
+            // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
+            let expected = width * 3 * height;
+            if len < expected {
+                warn!(
+                    "frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+            convert_bgr_bottom_up_to_rgb(raw, width, height)
+        } else if data.sub_type == MEDIASUBTYPE_YUY2 {
+            let expected = width * height * 2;
+            if len < expected {
+                warn!(
+                    "YUY2 frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+            convert_yuy2_to_rgb(raw, width, height)
+        } else if data.sub_type == MEDIASUBTYPE_NV12 {
+            let expected = width * height * 3 / 2;
+            if len < expected {
+                warn!(
+                    "NV12 frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+            trace!(target: "preview::graph", "Converting NV12 frame to RGB");
+            convert_nv12_to_rgb(raw, width, height)
+        } else {
+            // Unsupported format — drop the frame to prevent panics in
+            // compress_jpeg which expects RGB24 (width*height*3 bytes).
             warn!(
-                "frame size mismatch: got {len} bytes, expected {expected} ({}x{})",
-                width, height
+                "unsupported sub_type {:?}, dropping frame ({len} bytes)",
+                data.sub_type
             );
             data.stats.lock().record_drop();
             return HRESULT(0);
-        }
+        };
 
-        let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
-
-        println!(
-            "[callback] pushing frame {}x{} ({} bytes)",
-            data.width,
-            data.height,
-            rgb.len()
-        );
-
-        let timestamp_us = (sample_time * 1_000_000.0) as u64;
         let frame_bytes = rgb.len();
-
         data.buffer.push(Frame {
             data: rgb,
             width: data.width,
             height: data.height,
             timestamp_us,
         });
-
         data.stats.lock().record_frame(frame_bytes, timestamp_us);
 
         HRESULT(0)
@@ -344,6 +369,7 @@ pub mod directshow {
         buffer: Arc<FrameBuffer>,
         width: u32,
         height: u32,
+        sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
     ) -> *mut core::ffi::c_void {
@@ -353,6 +379,7 @@ pub mod directshow {
             buffer,
             width,
             height,
+            sub_type,
             running,
             stats,
         });
@@ -382,8 +409,170 @@ pub mod directshow {
         }
     }
 
-    /// Find a DirectShow source filter by device path.
-    unsafe fn find_source_filter(device_path: &str) -> Result<IBaseFilter, String> {
+    /// Configure the source filter's output pin to request a specific resolution.
+    ///
+    /// Enumerates the pin's stream capabilities via IAMStreamConfig, picks the
+    /// best match for the requested width/height, and calls SetFormat. If no
+    /// suitable format is found or the pin doesn't support IAMStreamConfig, the
+    /// function logs a warning and returns without error — the graph will fall
+    /// back to the camera's default resolution.
+    unsafe fn configure_source_resolution(source: &IBaseFilter, width: u32, height: u32) {
+        use windows::Win32::Media::MediaFoundation::FORMAT_VideoInfo;
+
+        let pin_enum = match source.EnumPins() {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("EnumPins failed when configuring resolution: {e}");
+                return;
+            }
+        };
+
+        let mut pin_array = [None; 1];
+
+        // Find the first output pin with IAMStreamConfig
+        loop {
+            let hr = pin_enum.Next(&mut pin_array, None);
+            if hr.is_err() {
+                break;
+            }
+
+            let Some(pin) = pin_array[0].take() else {
+                break;
+            };
+
+            let dir = match pin.QueryDirection() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // PINDIR_OUTPUT = 1
+            if dir.0 != 1 {
+                continue;
+            }
+
+            let Ok(stream_config) = pin.cast::<IAMStreamConfig>() else {
+                continue;
+            };
+
+            let mut count = 0i32;
+            let mut size = 0i32;
+            if stream_config
+                .GetNumberOfCapabilities(&mut count, &mut size)
+                .is_err()
+            {
+                continue;
+            }
+
+            let target_pixels = (width as u64) * (height as u64);
+            let mut best_index: Option<i32> = None;
+            let mut best_diff: u64 = u64::MAX;
+
+            for i in 0..count {
+                let mut scc = vec![0u8; size as usize];
+                let mut mt_ptr = std::ptr::null_mut();
+                if stream_config
+                    .GetStreamCaps(i, &mut mt_ptr, scc.as_mut_ptr())
+                    .is_err()
+                {
+                    continue;
+                }
+
+                if mt_ptr.is_null() {
+                    continue;
+                }
+
+                let mt_ref = &*mt_ptr;
+                let mut cap_w = 0u32;
+                let mut cap_h = 0u32;
+
+                if mt_ref.formattype == FORMAT_VideoInfo
+                    && !mt_ref.pbFormat.is_null()
+                    && mt_ref.cbFormat as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+                {
+                    let vih: &VIDEOINFOHEADER = &*(mt_ref.pbFormat as *const VIDEOINFOHEADER);
+                    cap_w = vih.bmiHeader.biWidth as u32;
+                    cap_h = vih.bmiHeader.biHeight.unsigned_abs();
+                }
+
+                // Free the AM_MEDIA_TYPE
+                if !mt_ref.pbFormat.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(Some(mt_ref.pbFormat.cast()));
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(
+                    (mt_ptr as *mut core::ffi::c_void).cast(),
+                ));
+
+                if cap_w == 0 || cap_h == 0 {
+                    continue;
+                }
+
+                let cap_pixels = (cap_w as u64) * (cap_h as u64);
+                let diff = cap_pixels.abs_diff(target_pixels);
+                if diff < best_diff {
+                    best_diff = diff;
+                    best_index = Some(i);
+                }
+            }
+
+            if let Some(idx) = best_index {
+                let mut scc = vec![0u8; size as usize];
+                let mut mt_ptr = std::ptr::null_mut();
+                if stream_config
+                    .GetStreamCaps(idx, &mut mt_ptr, scc.as_mut_ptr())
+                    .is_ok()
+                    && !mt_ptr.is_null()
+                {
+                    let mt_ref = &*mt_ptr;
+                    let mut fmt_w = 0u32;
+                    let mut fmt_h = 0u32;
+                    if mt_ref.formattype == FORMAT_VideoInfo
+                        && !mt_ref.pbFormat.is_null()
+                        && mt_ref.cbFormat as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+                    {
+                        let vih: &VIDEOINFOHEADER = &*(mt_ref.pbFormat as *const VIDEOINFOHEADER);
+                        fmt_w = vih.bmiHeader.biWidth as u32;
+                        fmt_h = vih.bmiHeader.biHeight.unsigned_abs();
+                    }
+
+                    match stream_config.SetFormat(mt_ptr) {
+                        Ok(()) => {
+                            info!(
+                                "configured source resolution to {fmt_w}x{fmt_h} \
+                                 (requested {width}x{height})"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "SetFormat({fmt_w}x{fmt_h}) failed: {e}, \
+                                 falling back to camera default"
+                            );
+                        }
+                    }
+
+                    // Free the AM_MEDIA_TYPE
+                    if !mt_ref.pbFormat.is_null() {
+                        windows::Win32::System::Com::CoTaskMemFree(Some(mt_ref.pbFormat.cast()));
+                    }
+                    windows::Win32::System::Com::CoTaskMemFree(Some(
+                        (mt_ptr as *mut core::ffi::c_void).cast(),
+                    ));
+                }
+            } else {
+                warn!("no stream capabilities found, using camera default resolution");
+            }
+
+            return;
+        }
+
+        warn!("no output pin with IAMStreamConfig found, using camera default resolution");
+    }
+
+    /// Find a DirectShow source filter by device path, falling back to
+    /// friendly name for virtual cameras that lack a DevicePath property.
+    unsafe fn find_source_filter(
+        device_path: &str,
+        friendly_name: &str,
+    ) -> Result<IBaseFilter, String> {
         use windows::Win32::System::Com::IMoniker;
 
         let dev_enum: ICreateDevEnum =
@@ -420,7 +609,20 @@ pub mod directshow {
             };
 
             let path = read_property_string(&bag, "DevicePath").unwrap_or_default();
-            if path != device_path {
+            let name = read_property_string(&bag, "FriendlyName").unwrap_or_default();
+
+            // Match by device path first, fall back to friendly name for
+            // virtual cameras that may not have a DevicePath property.
+            let matched = if !device_path.is_empty() && path == device_path {
+                true
+            } else if !friendly_name.is_empty() && path.is_empty() && name == friendly_name {
+                info!("matched virtual camera by FriendlyName: {name}");
+                true
+            } else {
+                false
+            };
+
+            if !matched {
                 continue;
             }
 
@@ -434,7 +636,9 @@ pub mod directshow {
             return Ok(filter);
         }
 
-        Err(format!("device not found: {device_path}"))
+        Err(format!(
+            "device not found: path={device_path}, name={friendly_name}"
+        ))
     }
 
     /// Read a string property from an IPropertyBag.
@@ -472,8 +676,9 @@ pub mod directshow {
     /// capture thread.
     pub fn run_capture_graph(
         device_path: &str,
-        _width: u32,
-        _height: u32,
+        friendly_name: &str,
+        width: u32,
+        height: u32,
         buffer: Arc<FrameBuffer>,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
@@ -495,7 +700,7 @@ pub mod directshow {
             })?;
 
             // 2. Find and add source filter
-            let source = find_source_filter(device_path).map_err(|e| {
+            let source = find_source_filter(device_path, friendly_name).map_err(|e| {
                 error!("failed to find source filter for {device_path}: {e}");
                 e
             })?;
@@ -505,6 +710,13 @@ pub mod directshow {
                     error!("failed to add source filter: {e}");
                     format!("failed to add source filter: {e}")
                 })?;
+
+            // 2b. Configure the source output pin resolution via IAMStreamConfig.
+            //     This requests the camera to output at the desired resolution
+            //     rather than defaulting to its maximum (e.g. 1920x1080).
+            if width > 0 && height > 0 {
+                configure_source_resolution(&source, width, height);
+            }
 
             // 3. Create and add SampleGrabber filter
             let grabber_filter: IBaseFilter =
@@ -522,24 +734,11 @@ pub mod directshow {
                     format!("failed to add SampleGrabber filter: {e}")
                 })?;
 
-            // 4. Configure SampleGrabber to accept RGB24
+            // 4. Configure SampleGrabber
             let grabber = SampleGrabber::from_filter(&grabber_filter).ok_or_else(|| {
                 error!("failed to query ISampleGrabber from SampleGrabber filter");
                 "failed to query ISampleGrabber".to_string()
             })?;
-
-            let mt = AmMediaType {
-                major_type: MEDIATYPE_VIDEO,
-                sub_type: MEDIASUBTYPE_RGB24,
-                format_type: FORMAT_VIDEOINFO,
-                ..AmMediaType::default()
-            };
-
-            let hr = grabber.set_media_type(&mt);
-            if hr.is_err() {
-                error!("SetMediaType(RGB24) failed: {hr:?}");
-                return Err(format!("SetMediaType failed: {hr:?}"));
-            }
 
             let hr = grabber.set_one_shot(false);
             if hr.is_err() {
@@ -569,15 +768,56 @@ pub mod directshow {
                     format!("failed to add NullRenderer: {e}")
                 })?;
 
-            // 6. Connect: Source -> SampleGrabber (intelligent connect
-            //    inserts colour-space converters when the camera outputs
-            //    MJPG/YUY2 instead of RGB24)
+            // 6. Connect: Source -> SampleGrabber -> NullRenderer
+            //    Try RGB24 first (DirectShow inserts colour converters).
+            //    If that fails (e.g. OBS Virtual Camera only outputs YUY2/NV12),
+            //    fall back to accepting any subtype and convert in the callback.
+            let rgb24_mt = AmMediaType {
+                major_type: MEDIATYPE_VIDEO,
+                sub_type: MEDIASUBTYPE_RGB24,
+                format_type: GUID::zeroed(),
+                ..AmMediaType::default()
+            };
+
+            let hr = grabber.set_media_type(&rgb24_mt);
+            if hr.is_err() {
+                error!("SetMediaType(RGB24) failed: {hr:?}");
+                return Err(format!("SetMediaType failed: {hr:?}"));
+            }
+
             let source_out = find_unconnected_pin(&source, 1)?;
             let grabber_in = find_unconnected_pin(&grabber_filter, 0)?;
-            graph2.Connect(&source_out, &grabber_in).map_err(|e| {
-                error!("failed to connect source -> grabber: {e}");
-                format!("failed to connect source -> grabber: {e}")
-            })?;
+            let connect_result = graph2.Connect(&source_out, &grabber_in);
+
+            if let Err(ref e) = connect_result {
+                // 0x80040217 = VFW_E_CANNOT_CONNECT — no colour converter
+                // available. Fall back to accepting any subtype.
+                warn!("RGB24 connect failed ({e}), retrying with any subtype");
+
+                // Disconnect any partial connections before retrying
+                let _ = graph2.Disconnect(&source_out);
+                let _ = graph2.Disconnect(&grabber_in);
+
+                let any_mt = AmMediaType {
+                    major_type: MEDIATYPE_VIDEO,
+                    sub_type: GUID::zeroed(),
+                    format_type: GUID::zeroed(),
+                    ..AmMediaType::default()
+                };
+
+                let hr = grabber.set_media_type(&any_mt);
+                if hr.is_err() {
+                    error!("SetMediaType(any) failed: {hr:?}");
+                    return Err(format!("SetMediaType(any) failed: {hr:?}"));
+                }
+
+                graph2.Connect(&source_out, &grabber_in).map_err(|e| {
+                    error!("failed to connect source -> grabber (fallback): {e}");
+                    format!("failed to connect source -> grabber: {e}")
+                })?;
+
+                info!("connected with any-subtype fallback");
+            }
 
             // 7. Connect: SampleGrabber -> NullRenderer
             let grabber_out = find_unconnected_pin(&grabber_filter, 1)?;
@@ -592,22 +832,28 @@ pub mod directshow {
             //    than what was requested.
             let mut connected_mt = AmMediaType::default();
             let hr = grabber.get_connected_media_type(&mut connected_mt);
-            let (actual_width, actual_height) = if hr.is_ok()
-                && connected_mt.format_type == FORMAT_VIDEOINFO
+
+            info!(
+                "negotiated sub_type: {:?}, format_type: {:?}",
+                connected_mt.sub_type, connected_mt.format_type
+            );
+
+            let (actual_width, actual_height, actual_sub_type) = if hr.is_ok()
                 && !connected_mt.pb_format.is_null()
                 && connected_mt.cb_format as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
             {
                 let vih = &*(connected_mt.pb_format as *const VIDEOINFOHEADER);
                 let w = vih.bmiHeader.biWidth as u32;
                 let h = vih.bmiHeader.biHeight.unsigned_abs();
+                let sub = connected_mt.sub_type;
                 info!("negotiated resolution: {w}x{h}");
-                (w, h)
+                (w, h, sub)
             } else {
                 warn!(
                     "could not query connected media type (hr={hr:?}), \
-                     falling back to requested {_width}x{_height}"
+                     falling back to requested {width}x{height}"
                 );
-                (_width, _height)
+                (width, height, MEDIASUBTYPE_RGB24)
             };
 
             // Free the format block if allocated
@@ -622,6 +868,7 @@ pub mod directshow {
                 buffer,
                 actual_width,
                 actual_height,
+                actual_sub_type,
                 Arc::clone(&running),
                 stats,
             );
@@ -728,6 +975,67 @@ pub fn convert_bgr_bottom_up_to_rgb(bgr: &[u8], width: usize, height: usize) -> 
     rgb
 }
 
+/// Convert YUY2 (YUYV) packed data to RGB24.
+///
+/// YUY2 stores two pixels per 4-byte macro-pixel: [Y0, U, Y1, V].
+/// Uses BT.601 conversion coefficients. Width must be even.
+pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let expected = width * height * 2;
+    if yuy2.len() < expected || width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let mut rgb = vec![0u8; width * height * 3];
+    for i in 0..(width * height / 2) {
+        let y0 = yuy2[i * 4] as f32;
+        let u = yuy2[i * 4 + 1] as f32 - 128.0;
+        let y1 = yuy2[i * 4 + 2] as f32;
+        let v = yuy2[i * 4 + 3] as f32 - 128.0;
+
+        let base = i * 6;
+        rgb[base] = (y0 + 1.402 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 1] = (y0 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 2] = (y0 + 1.772 * u).clamp(0.0, 255.0) as u8;
+        rgb[base + 3] = (y1 + 1.402 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 4] = (y1 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+        rgb[base + 5] = (y1 + 1.772 * u).clamp(0.0, 255.0) as u8;
+    }
+    rgb
+}
+
+/// Convert NV12 planar data to RGB24.
+///
+/// NV12 stores a full-resolution Y plane followed by an interleaved UV plane
+/// at half resolution in both dimensions (4:2:0 subsampling). Each 2x2 block
+/// of pixels shares one U,V pair. Uses BT.601 conversion coefficients.
+pub fn convert_nv12_to_rgb(nv12: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let expected = width * height * 3 / 2;
+    if nv12.len() < expected || width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let y_plane = &nv12[..width * height];
+    let uv_plane = &nv12[width * height..];
+
+    let mut rgb = vec![0u8; width * height * 3];
+
+    for row in 0..height {
+        for col in 0..width {
+            let y = y_plane[row * width + col] as f32;
+            let uv_index = (row / 2) * width + (col / 2) * 2;
+            let u = uv_plane[uv_index] as f32 - 128.0;
+            let v = uv_plane[uv_index + 1] as f32 - 128.0;
+
+            let base = (row * width + col) * 3;
+            rgb[base] = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
+            rgb[base + 1] = (y - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+            rgb[base + 2] = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    rgb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,5 +1110,122 @@ mod tests {
     fn empty_input_returns_empty() {
         let result = convert_bgr_bottom_up_to_rgb(&[], 0, 0);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_yuy2_white_pixel_pair() {
+        // White in YUY2: Y=235, U=128, V=128 (no chroma)
+        let yuy2 = vec![235, 128, 235, 128];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 1);
+        assert_eq!(rgb.len(), 6);
+        // Y=235, U=0, V=0 => R=235, G=235, B=235
+        assert_eq!(rgb[0], 235);
+        assert_eq!(rgb[1], 235);
+        assert_eq!(rgb[2], 235);
+        assert_eq!(rgb[3], 235);
+        assert_eq!(rgb[4], 235);
+        assert_eq!(rgb[5], 235);
+    }
+
+    #[test]
+    fn converts_yuy2_black_pixel_pair() {
+        // Black in YUY2: Y=0, U=128, V=128
+        let yuy2 = vec![0, 128, 0, 128];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 1);
+        assert_eq!(rgb, vec![0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn yuy2_undersized_buffer_returns_empty() {
+        let result = convert_yuy2_to_rgb(&[0u8; 3], 2, 1);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn yuy2_zero_dimensions_returns_empty() {
+        let result = convert_yuy2_to_rgb(&[], 0, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_yuy2_2x2_produces_correct_size() {
+        // 2x2 image = 2 macro-pixels (one per row)
+        let yuy2 = vec![
+            128, 128, 128, 128, // row 0: grey pair
+            128, 128, 128, 128, // row 1: grey pair
+        ];
+        let rgb = convert_yuy2_to_rgb(&yuy2, 2, 2);
+        assert_eq!(rgb.len(), 2 * 2 * 3); // 12 bytes
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_grey() {
+        // 2x2 NV12 grey image: Y=128 for all pixels, U=128, V=128 (no chroma)
+        // Y plane: 4 bytes, UV plane: 2 bytes (one U, one V interleaved)
+        let nv12 = vec![
+            128, 128, 128, 128, // Y plane (2x2)
+            128, 128, // UV plane (1 pair for the 2x2 block)
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 2 * 2 * 3);
+        // Y=128, U=0, V=0 => R=128, G=128, B=128
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [128, 128, 128]);
+        }
+    }
+
+    #[test]
+    fn nv12_undersized_buffer_returns_empty() {
+        // NV12 for 2x2 should be 6 bytes (4 Y + 2 UV), pass only 5
+        let result = convert_nv12_to_rgb(&[0u8; 5], 2, 2);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_4x2() {
+        // 4x2 NV12: Y plane = 8 bytes, UV plane = 4 bytes (2 U/V pairs)
+        // All grey: Y=200, U=128, V=128
+        let mut nv12 = vec![200u8; 8]; // Y plane
+        nv12.extend_from_slice(&[128, 128, 128, 128]); // UV plane
+        let rgb = convert_nv12_to_rgb(&nv12, 4, 2);
+        assert_eq!(rgb.len(), 4 * 2 * 3);
+        // Y=200, U=0, V=0 => R=200, G=200, B=200
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [200, 200, 200]);
+        }
+    }
+
+    #[test]
+    fn nv12_zero_dimensions_returns_empty() {
+        let result = convert_nv12_to_rgb(&[], 0, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_black() {
+        // Black: Y=0, U=128, V=128
+        let nv12 = vec![
+            0, 0, 0, 0, // Y plane (2x2)
+            128, 128, // UV plane
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 12);
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [0, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_white() {
+        // White: Y=235, U=128, V=128
+        let nv12 = vec![
+            235, 235, 235, 235, // Y plane (2x2)
+            128, 128, // UV plane
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 12);
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [235, 235, 235]);
+        }
     }
 }

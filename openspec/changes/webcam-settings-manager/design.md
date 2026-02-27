@@ -318,7 +318,7 @@ When additional settings are disabled, the processing pipeline is completely byp
 
 - **Cross-platform UVC control parity** — Different platforms expose different subsets of UVC controls, and behaviour may vary between DirectShow, AVFoundation, and V4L2. Mitigation: the `CameraBackend` trait provides a uniform interface; platform-specific quirks are handled in each implementation. Comprehensive per-platform testing with multiple camera models is essential.
 
-- **Non-UVC cameras (GoPro, Canon DSLR)** — Cameras that connect via USB but use proprietary protocols (GoPro uses its own USB protocol, Canon uses PTP/MTP) may not expose standard UVC controls. Mitigation: these cameras will appear as video sources (they present as UVC devices for capture) but may have limited or no controllable parameters. Document this limitation; investigate vendor-specific SDK integration as a future enhancement.
+- **Non-UVC cameras (GoPro, Canon DSLR)** — Cameras that connect via USB but use proprietary protocols (GoPro uses its own USB protocol, Canon uses PTP/MTP) may not expose standard UVC controls. Mitigation: PTP/MTP cameras are now planned for native support via `libgphoto2` (see `specs/ptp-camera-support/spec.md` and tasks 29-31). GoPro USB protocol support remains a future investigation. Canon's "EOS Webcam Utility" is now pro-only (paid), making native PTP support a higher priority.
 
 - **wgpu availability** — GPU compute via wgpu requires appropriate GPU drivers. On systems without GPU support (some VMs, older hardware), the colour pipeline must fall back to CPU processing. Mitigation: implement CPU fallback path using `image` crate transformations; detect GPU availability at startup.
 

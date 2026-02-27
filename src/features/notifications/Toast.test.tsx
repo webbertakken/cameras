@@ -42,4 +42,10 @@ describe('Toast', () => {
 
     expect(screen.getByRole('status')).toHaveClass('toast--info')
   })
+
+  it('applies error variant class', () => {
+    render(<Toast id="1" message="Preview failed" type="error" onDismiss={vi.fn()} />)
+
+    expect(screen.getByRole('status')).toHaveClass('toast--error')
+  })
 })
