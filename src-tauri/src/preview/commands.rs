@@ -53,12 +53,15 @@ pub async fn start_preview(
     height: u32,
     fps: f32,
 ) -> Result<(), String> {
+    println!("[preview] start_preview called for device_id={device_id}");
+
     if device_id.is_empty() {
         return Err("device_id must not be empty".to_string());
     }
 
     // Resolve device_id to the actual device path needed by DirectShow
     let device_path = resolve_device_path(&camera_state, &device_id)?;
+    println!("[preview] resolved device_path={device_path}");
 
     let mut sessions = state.sessions.lock();
     if sessions.contains_key(&device_id) {
@@ -68,6 +71,7 @@ pub async fn start_preview(
     }
 
     let session = CaptureSession::new(device_path, width, height, fps);
+    println!("[preview] session created, capture thread spawned");
     sessions.insert(device_id, session);
     Ok(())
 }
