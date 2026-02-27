@@ -537,7 +537,7 @@ mod tests {
             pixel_format: "MJPG".to_string(),
         };
 
-        let mut formats = vec![sd.clone(), hd.clone()];
+        let mut formats = [sd.clone(), hd.clone()];
         formats.sort();
 
         assert_eq!(formats[0], hd);
@@ -559,7 +559,7 @@ mod tests {
             pixel_format: "MJPG".to_string(),
         };
 
-        let mut formats = vec![f30.clone(), f60.clone()];
+        let mut formats = [f30.clone(), f60.clone()];
         formats.sort();
 
         assert_eq!(formats[0], f60);

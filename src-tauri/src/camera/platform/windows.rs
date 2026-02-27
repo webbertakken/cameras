@@ -1056,7 +1056,6 @@ mod tests {
     #[test]
     fn watch_hotplug_accepts_send_callback() {
         let _callback: Box<dyn Fn(HotplugEvent) + Send> = Box::new(|_| {});
-        assert!(true);
     }
 
     // --- control_id_to_camera_property tests ---
