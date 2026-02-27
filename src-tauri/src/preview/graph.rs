@@ -5,6 +5,7 @@
 
 #[cfg(target_os = "windows")]
 pub mod directshow {
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -23,6 +24,7 @@ pub mod directshow {
     };
     use windows::Win32::System::Variant::VARIANT;
 
+    use crate::diagnostics::stats::DiagnosticStats;
     use crate::preview::capture::{Frame, FrameBuffer};
     use crate::preview::graph::convert_bgr_bottom_up_to_rgb;
 
@@ -213,6 +215,7 @@ pub mod directshow {
         width: u32,
         height: u32,
         running: Arc<AtomicBool>,
+        stats: Arc<Mutex<DiagnosticStats>>,
     }
 
     static FRAME_CALLBACK_VTBL: ISampleGrabberCBVtbl = ISampleGrabberCBVtbl {
@@ -297,6 +300,7 @@ pub mod directshow {
         let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
 
         let timestamp_us = (sample_time * 1_000_000.0) as u64;
+        let frame_bytes = rgb.len();
 
         data.buffer.push(Frame {
             data: rgb,
@@ -304,6 +308,8 @@ pub mod directshow {
             height: data.height,
             timestamp_us,
         });
+
+        data.stats.lock().record_frame(frame_bytes, timestamp_us);
 
         HRESULT(0)
     }
@@ -315,6 +321,7 @@ pub mod directshow {
         width: u32,
         height: u32,
         running: Arc<AtomicBool>,
+        stats: Arc<Mutex<DiagnosticStats>>,
     ) -> *mut core::ffi::c_void {
         let data = Box::new(FrameCallbackData {
             vtbl: &FRAME_CALLBACK_VTBL,
@@ -323,6 +330,7 @@ pub mod directshow {
             width,
             height,
             running,
+            stats,
         });
         Box::into_raw(data) as *mut core::ffi::c_void
     }
@@ -444,6 +452,7 @@ pub mod directshow {
         height: u32,
         buffer: Arc<FrameBuffer>,
         running: Arc<AtomicBool>,
+        stats: Arc<Mutex<DiagnosticStats>>,
     ) -> Result<(), String> {
         unsafe {
             let _guard = ComGuard::init()?;
@@ -522,7 +531,8 @@ pub mod directshow {
                 .map_err(|e| format!("failed to connect grabber -> null renderer: {e}"))?;
 
             // 8. Set up callback (mode 1 = BufferCB)
-            let callback = create_frame_callback(buffer, width, height, Arc::clone(&running));
+            let callback =
+                create_frame_callback(buffer, width, height, Arc::clone(&running), stats);
 
             let hr = grabber.set_callback(callback, 1);
             if hr.is_err() {

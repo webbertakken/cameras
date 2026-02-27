@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tracing::{error, info};
 
+use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
+
 /// A single captured frame from the camera.
 #[derive(Clone)]
 pub struct Frame {
@@ -69,6 +71,7 @@ pub struct CaptureSession {
     buffer: Arc<FrameBuffer>,
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    stats: Arc<Mutex<DiagnosticStats>>,
 }
 
 impl CaptureSession {
@@ -80,11 +83,13 @@ impl CaptureSession {
     pub fn new(device_id: String, width: u32, height: u32, _fps: f32) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
 
         let thread = {
             let device_id_clone = device_id.clone();
             let buffer_clone = Arc::clone(&buffer);
             let running_clone = Arc::clone(&running);
+            let stats_clone = Arc::clone(&stats);
 
             #[cfg(target_os = "windows")]
             {
@@ -99,6 +104,7 @@ impl CaptureSession {
                                 height,
                                 buffer_clone,
                                 running_clone,
+                                stats_clone,
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
                             }
@@ -110,7 +116,14 @@ impl CaptureSession {
 
             #[cfg(not(target_os = "windows"))]
             {
-                let _ = (device_id_clone, buffer_clone, running_clone, width, height);
+                let _ = (
+                    device_id_clone,
+                    buffer_clone,
+                    running_clone,
+                    stats_clone,
+                    width,
+                    height,
+                );
                 None
             }
         };
@@ -120,6 +133,7 @@ impl CaptureSession {
             buffer,
             running,
             thread,
+            stats,
         }
     }
 
@@ -136,6 +150,11 @@ impl CaptureSession {
     /// Return the device ID for this session.
     pub fn device_id(&self) -> &str {
         &self.device_id
+    }
+
+    /// Take a snapshot of diagnostic stats for this session.
+    pub fn diagnostics(&self) -> DiagnosticSnapshot {
+        self.stats.lock().snapshot()
     }
 
     /// Stop the capture session. Idempotent — calling stop twice does not panic.

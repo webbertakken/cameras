@@ -139,19 +139,7 @@ pub async fn get_diagnostics(
         .get(&device_id)
         .ok_or_else(|| "no active preview for this device".to_string())?;
 
-    let frame = session.buffer().latest();
-    let frame_count = if frame.is_some() { 1 } else { 0 };
-
-    // Return basic diagnostic info based on what we can observe
-    Ok(DiagnosticSnapshot {
-        fps: if session.is_running() { 30.0 } else { 0.0 },
-        frame_count,
-        drop_count: 0,
-        drop_rate: 0.0,
-        latency_ms: 0.0,
-        bandwidth_bps: 0,
-        usb_bus_info: None,
-    })
+    Ok(session.diagnostics())
 }
 
 #[cfg(test)]
