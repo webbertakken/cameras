@@ -1,3 +1,4 @@
+import { resolve } from 'path'
 import { playwright } from '@vitest/browser-playwright'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
@@ -52,6 +53,42 @@ export default defineConfig(async () => ({
               },
             ],
             screenshotFailures: false,
+            expect: {
+              toMatchScreenshot: {
+                resolveScreenshotPath: ({
+                  arg,
+                  ext,
+                  root,
+                  testFileDirectory,
+                  screenshotDirectory,
+                  testFileName,
+                  browserName,
+                }) =>
+                  resolve(
+                    root,
+                    testFileDirectory,
+                    screenshotDirectory,
+                    testFileName,
+                    `${arg}-${browserName}${ext}`,
+                  ),
+                resolveDiffPath: ({
+                  arg,
+                  ext,
+                  root,
+                  attachmentsDir,
+                  testFileDirectory,
+                  testFileName,
+                  browserName,
+                }) =>
+                  resolve(
+                    root,
+                    attachmentsDir,
+                    testFileDirectory,
+                    testFileName,
+                    `${arg}-${browserName}${ext}`,
+                  ),
+              },
+            },
           },
         },
       },

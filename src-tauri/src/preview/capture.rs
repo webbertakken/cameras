@@ -2,6 +2,10 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+#[cfg(target_os = "windows")]
+use tracing::{error, info};
+
+use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 
 /// A single captured frame from the camera.
 #[derive(Clone)]
@@ -64,23 +68,73 @@ impl FrameBuffer {
 
 /// Active capture session for a single camera.
 pub struct CaptureSession {
-    #[allow(dead_code)]
     device_id: String,
     buffer: Arc<FrameBuffer>,
     running: Arc<AtomicBool>,
-    #[allow(dead_code)]
     thread: Option<JoinHandle<()>>,
+    stats: Arc<Mutex<DiagnosticStats>>,
 }
 
 impl CaptureSession {
-    /// Create a new capture session (does not start capture yet).
+    /// Create and start a capture session for the given device.
+    ///
+    /// On Windows, spawns a thread that builds a DirectShow filter graph
+    /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
+    /// into the shared FrameBuffer via an ISampleGrabberCB callback.
     pub fn new(device_id: String, width: u32, height: u32, _fps: f32) -> Self {
-        let _ = (width, height); // Will be used by platform capture
+        let buffer = Arc::new(FrameBuffer::new(3));
+        let running = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
+
+        let thread = {
+            let device_id_clone = device_id.clone();
+            let buffer_clone = Arc::clone(&buffer);
+            let running_clone = Arc::clone(&running);
+            let stats_clone = Arc::clone(&stats);
+
+            #[cfg(target_os = "windows")]
+            {
+                Some(
+                    std::thread::Builder::new()
+                        .name(format!("capture-{}", &device_id))
+                        .spawn(move || {
+                            info!("capture thread starting for {device_id_clone}");
+                            if let Err(e) = super::graph::directshow::run_capture_graph(
+                                &device_id_clone,
+                                width,
+                                height,
+                                buffer_clone,
+                                running_clone,
+                                stats_clone,
+                            ) {
+                                error!("capture graph failed for {device_id_clone}: {e}");
+                            }
+                            info!("capture thread exiting for {device_id_clone}");
+                        })
+                        .expect("failed to spawn capture thread"),
+                )
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (
+                    device_id_clone,
+                    buffer_clone,
+                    running_clone,
+                    stats_clone,
+                    width,
+                    height,
+                );
+                None
+            }
+        };
+
         Self {
             device_id,
-            buffer: Arc::new(FrameBuffer::new(3)),
-            running: Arc::new(AtomicBool::new(false)),
-            thread: None,
+            buffer,
+            running,
+            thread,
+            stats,
         }
     }
 
@@ -92,6 +146,16 @@ impl CaptureSession {
     /// Check if the capture session is currently running.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    /// Return the device ID for this session.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// Take a snapshot of diagnostic stats for this session.
+    pub fn diagnostics(&self) -> DiagnosticSnapshot {
+        self.stats.lock().snapshot()
     }
 
     /// Stop the capture session. Idempotent — calling stop twice does not panic.

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
 import { ToastContainer } from './features/notifications'
@@ -9,6 +9,7 @@ import './App.css'
 function App() {
   const setCameras = useCameraStore((s) => s.setCameras)
   const selectedCamera = useCameraStore((s) => s.selectedCamera())
+  const prevCameraId = useRef<string | null>(null)
 
   useEffect(() => {
     listCameras()
@@ -20,7 +21,27 @@ function App() {
 
   useHotplug()
 
-  const { frameSrc } = usePreview(selectedCamera?.id ?? null)
+  const preview = usePreview(selectedCamera?.id ?? null)
+
+  // Start preview when a camera is selected, stop when deselected or changed
+  useEffect(() => {
+    const cameraId = selectedCamera?.id ?? null
+
+    if (cameraId === prevCameraId.current) return
+    prevCameraId.current = cameraId
+
+    if (cameraId) {
+      preview.start(1920, 1080, 30).catch((err: unknown) => {
+        console.error('Failed to start preview:', err)
+      })
+    }
+
+    return () => {
+      preview.stop().catch((err: unknown) => {
+        console.error('Failed to stop preview:', err)
+      })
+    }
+  }, [selectedCamera?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="app-layout">
@@ -28,7 +49,7 @@ function App() {
       <main className="app-main">
         {selectedCamera ? (
           <>
-            <PreviewCanvas frameSrc={frameSrc} />
+            <PreviewCanvas frameSrc={preview.frameSrc} />
             <ControlsPanel cameraId={selectedCamera.id} cameraName={selectedCamera.name} />
           </>
         ) : (

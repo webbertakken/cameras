@@ -5,6 +5,9 @@ use tauri::State;
 
 use super::capture::CaptureSession;
 use super::compress;
+use crate::camera::commands::CameraState;
+use crate::camera::types::DeviceId;
+use crate::diagnostics::stats::DiagnosticSnapshot;
 
 /// Managed state holding active preview sessions.
 pub struct PreviewState {
@@ -25,10 +28,26 @@ impl Default for PreviewState {
     }
 }
 
+/// Resolve device_id to device_path via the camera backend.
+fn resolve_device_path(camera_state: &CameraState, device_id: &str) -> Result<String, String> {
+    let devices = camera_state
+        .backend
+        .enumerate_devices()
+        .map_err(|e| format!("failed to enumerate devices: {e}"))?;
+
+    let target_id = DeviceId::new(device_id);
+    devices
+        .iter()
+        .find(|d| d.id == target_id)
+        .map(|d| d.device_path.clone())
+        .ok_or_else(|| format!("device not found: {device_id}"))
+}
+
 /// Start a camera preview session.
 #[tauri::command]
 pub async fn start_preview(
     state: State<'_, PreviewState>,
+    camera_state: State<'_, CameraState>,
     device_id: String,
     width: u32,
     height: u32,
@@ -38,15 +57,17 @@ pub async fn start_preview(
         return Err("device_id must not be empty".to_string());
     }
 
+    // Resolve device_id to the actual device path needed by DirectShow
+    let device_path = resolve_device_path(&camera_state, &device_id)?;
+
     let mut sessions = state.sessions.lock();
     if sessions.contains_key(&device_id) {
-        // Already running — stop existing and restart
         if let Some(mut existing) = sessions.remove(&device_id) {
             existing.stop();
         }
     }
 
-    let session = CaptureSession::new(device_id.clone(), width, height, fps);
+    let session = CaptureSession::new(device_path, width, height, fps);
     sessions.insert(device_id, session);
     Ok(())
 }
@@ -105,6 +126,20 @@ pub async fn get_thumbnail(
         &base64::engine::general_purpose::STANDARD,
         &thumb,
     ))
+}
+
+/// Get diagnostic stats for a camera preview session.
+#[tauri::command]
+pub async fn get_diagnostics(
+    state: State<'_, PreviewState>,
+    device_id: String,
+) -> Result<DiagnosticSnapshot, String> {
+    let sessions = state.sessions.lock();
+    let session = sessions
+        .get(&device_id)
+        .ok_or_else(|| "no active preview for this device".to_string())?;
+
+    Ok(session.diagnostics())
 }
 
 #[cfg(test)]

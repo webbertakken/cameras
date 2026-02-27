@@ -84,4 +84,22 @@ describe('App', () => {
     rerender(<App />)
     expect(screen.getByRole('region', { name: 'Camera controls' })).toBeInTheDocument()
   })
+
+  it('calls start_preview when camera is selected', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const mockInvoke = vi.mocked(invoke)
+    mockInvoke.mockResolvedValue(undefined)
+
+    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
+    render(<App />)
+
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
+        deviceId: 'cam-1',
+        width: 1920,
+        height: 1080,
+        fps: 30,
+      })
+    })
+  })
 })

@@ -164,6 +164,14 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
     )
   }
 
+  if (descriptors.length === 0) {
+    return (
+      <section aria-label="Camera controls" className="controls-panel">
+        <p className="controls-panel__empty">No adjustable controls</p>
+      </section>
+    )
+  }
+
   // Group controls by their group field
   const groups = new Map<ControlGroup, ControlDescriptor[]>()
   for (const desc of descriptors) {
