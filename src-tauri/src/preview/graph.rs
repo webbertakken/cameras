@@ -9,7 +9,7 @@ pub mod directshow {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info, trace, warn};
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
         IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl, IPin,
@@ -27,7 +27,9 @@ pub mod directshow {
 
     use crate::diagnostics::stats::DiagnosticStats;
     use crate::preview::capture::{Frame, FrameBuffer};
-    use crate::preview::graph::{convert_bgr_bottom_up_to_rgb, convert_yuy2_to_rgb};
+    use crate::preview::graph::{
+        convert_bgr_bottom_up_to_rgb, convert_nv12_to_rgb, convert_yuy2_to_rgb,
+    };
 
     // --- Manually defined types not in windows-rs metadata ---
 
@@ -91,6 +93,9 @@ pub mod directshow {
 
     // MEDIASUBTYPE_YUY2: {32595559-0000-0010-8000-00AA00389B71}
     const MEDIASUBTYPE_YUY2: GUID = GUID::from_u128(0x32595559_0000_0010_8000_00AA00389B71);
+
+    // MEDIASUBTYPE_NV12: {3231564E-0000-0010-8000-00AA00389B71}
+    const MEDIASUBTYPE_NV12: GUID = GUID::from_u128(0x3231564E_0000_0010_8000_00AA00389B71);
 
     // FORMAT_VideoInfo: {05589F80-C356-11CE-BF01-00AA0055595A}
     const FORMAT_VIDEOINFO: GUID = GUID::from_u128(0x05589f80_c356_11ce_bf01_00aa0055595a);
@@ -323,6 +328,17 @@ pub mod directshow {
                 return HRESULT(0);
             }
             convert_yuy2_to_rgb(raw, width, height)
+        } else if data.sub_type == MEDIASUBTYPE_NV12 {
+            let expected = width * height * 3 / 2;
+            if len < expected {
+                warn!(
+                    "NV12 frame size mismatch: got {len} bytes, expected {expected} ({width}x{height})"
+                );
+                data.stats.lock().record_drop();
+                return HRESULT(0);
+            }
+            trace!(target: "preview::graph", "Converting NV12 frame to RGB");
+            convert_nv12_to_rgb(raw, width, height)
         } else {
             // Unsupported format — drop the frame to prevent panics in
             // compress_jpeg which expects RGB24 (width*height*3 bytes).
@@ -821,6 +837,39 @@ pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> 
     rgb
 }
 
+/// Convert NV12 planar data to RGB24.
+///
+/// NV12 stores a full-resolution Y plane followed by an interleaved UV plane
+/// at half resolution in both dimensions (4:2:0 subsampling). Each 2x2 block
+/// of pixels shares one U,V pair. Uses BT.601 conversion coefficients.
+pub fn convert_nv12_to_rgb(nv12: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let expected = width * height * 3 / 2;
+    if nv12.len() < expected || width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let y_plane = &nv12[..width * height];
+    let uv_plane = &nv12[width * height..];
+
+    let mut rgb = vec![0u8; width * height * 3];
+
+    for row in 0..height {
+        for col in 0..width {
+            let y = y_plane[row * width + col] as f32;
+            let uv_index = (row / 2) * width + (col / 2) * 2;
+            let u = uv_plane[uv_index] as f32 - 128.0;
+            let v = uv_plane[uv_index + 1] as f32 - 128.0;
+
+            let base = (row * width + col) * 3;
+            rgb[base] = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
+            rgb[base + 1] = (y - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
+            rgb[base + 2] = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    rgb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -941,5 +990,76 @@ mod tests {
         ];
         let rgb = convert_yuy2_to_rgb(&yuy2, 2, 2);
         assert_eq!(rgb.len(), 2 * 2 * 3); // 12 bytes
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_grey() {
+        // 2x2 NV12 grey image: Y=128 for all pixels, U=128, V=128 (no chroma)
+        // Y plane: 4 bytes, UV plane: 2 bytes (one U, one V interleaved)
+        let nv12 = vec![
+            128, 128, 128, 128, // Y plane (2x2)
+            128, 128, // UV plane (1 pair for the 2x2 block)
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 2 * 2 * 3);
+        // Y=128, U=0, V=0 => R=128, G=128, B=128
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [128, 128, 128]);
+        }
+    }
+
+    #[test]
+    fn nv12_undersized_buffer_returns_empty() {
+        // NV12 for 2x2 should be 6 bytes (4 Y + 2 UV), pass only 5
+        let result = convert_nv12_to_rgb(&[0u8; 5], 2, 2);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_4x2() {
+        // 4x2 NV12: Y plane = 8 bytes, UV plane = 4 bytes (2 U/V pairs)
+        // All grey: Y=200, U=128, V=128
+        let mut nv12 = vec![200u8; 8]; // Y plane
+        nv12.extend_from_slice(&[128, 128, 128, 128]); // UV plane
+        let rgb = convert_nv12_to_rgb(&nv12, 4, 2);
+        assert_eq!(rgb.len(), 4 * 2 * 3);
+        // Y=200, U=0, V=0 => R=200, G=200, B=200
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [200, 200, 200]);
+        }
+    }
+
+    #[test]
+    fn nv12_zero_dimensions_returns_empty() {
+        let result = convert_nv12_to_rgb(&[], 0, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_black() {
+        // Black: Y=0, U=128, V=128
+        let nv12 = vec![
+            0, 0, 0, 0, // Y plane (2x2)
+            128, 128, // UV plane
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 12);
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [0, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn converts_nv12_to_rgb_white() {
+        // White: Y=235, U=128, V=128
+        let nv12 = vec![
+            235, 235, 235, 235, // Y plane (2x2)
+            128, 128, // UV plane
+        ];
+        let rgb = convert_nv12_to_rgb(&nv12, 2, 2);
+        assert_eq!(rgb.len(), 12);
+        for pixel in rgb.chunks(3) {
+            assert_eq!(pixel, [235, 235, 235]);
+        }
     }
 }
