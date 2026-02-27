@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0](https://github.com/webbertakken/cameras/compare/v0.3.1...v0.4.0) (2026-02-27)
+
+
+### Features
+
+* **testing:** add visual regression with baselines ([#32](https://github.com/webbertakken/cameras/issues/32)) ([51ccfea](https://github.com/webbertakken/cameras/commit/51ccfea20fde9e44f5381155b1e8da27ed6b929e))
+
+
+### Bug fixes
+
+* **ci:** add --repo flag to gh pr view in update-snapshots workflow ([#39](https://github.com/webbertakken/cameras/issues/39)) ([62a0538](https://github.com/webbertakken/cameras/commit/62a0538cf7d7ab8359effe03b6e017730464304a))
+* implement DirectShow capture pipeline and wire preview ([b8d2293](https://github.com/webbertakken/cameras/commit/b8d2293c40d8e578acacbb52d1fb4ea1bf62042b))
+* **logging:** explicit stdout target and debug println for preview ([#36](https://github.com/webbertakken/cameras/issues/36)) ([9d67695](https://github.com/webbertakken/cameras/commit/9d6769593866f31b194daa6e0428a9b1c3010538))
+* **preview:** accept any video format, handle virtual cameras ([#38](https://github.com/webbertakken/cameras/issues/38)) ([6d24637](https://github.com/webbertakken/cameras/commit/6d24637c29178cc4ee44b4f35379fd864d43e433))
+* **preview:** decode base64 frame response from Rust backend ([#40](https://github.com/webbertakken/cameras/issues/40)) ([40ababa](https://github.com/webbertakken/cameras/commit/40abababf935a724ace78a81d06cf10d4e26a1b3))
+* **ui:** resolve tray icon toggle and dark mode flash ([#34](https://github.com/webbertakken/cameras/issues/34)) ([3140683](https://github.com/webbertakken/cameras/commit/314068318513b96ef0993e27a022c83cfc853f0b))
+
+
+### Maintenance
+
+* make yarn dev run full Tauri app ([#31](https://github.com/webbertakken/cameras/issues/31)) ([ba5250d](https://github.com/webbertakken/cameras/commit/ba5250d53b4874edcebb3f253a40769b3aa6415c))
+
 ## [0.3.1](https://github.com/webbertakken/cameras/compare/v0.3.0...v0.3.1) (2026-02-26)
 
 ### Bug fixes
