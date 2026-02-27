@@ -10,9 +10,9 @@ use crate::camera::commands::CameraState;
 use crate::camera::types::DeviceId;
 use crate::diagnostics::stats::DiagnosticSnapshot;
 
-/// Cached JPEG result for a single device, keyed by frame timestamp.
+/// Cached JPEG result for a single device, keyed by frame sequence number.
 struct JpegCache {
-    timestamp_us: u64,
+    sequence: u64,
     base64: String,
 }
 
@@ -128,23 +128,26 @@ pub async fn get_frame(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
-    let frame = {
+    let (frame, seq) = {
         let sessions = state.sessions.lock();
         let session = sessions
             .get(&device_id)
             .ok_or_else(|| "no active preview for this device".to_string())?;
 
-        session
-            .buffer()
+        let buf = session.buffer();
+        let f = buf
             .latest()
-            .ok_or_else(|| "no frame available".to_string())?
+            .ok_or_else(|| "no frame available".to_string())?;
+        (f, buf.sequence())
     };
 
-    // Check cache — return early if the frame hasn't changed
+    // Check cache — return early if the frame hasn't changed.
+    // Uses the monotonic sequence counter rather than the frame's own
+    // timestamp, because some virtual cameras (e.g. OBS) always report 0.
     {
         let cache = state.jpeg_cache.lock();
         if let Some(cached) = cache.get(&device_id) {
-            if cached.timestamp_us == frame.timestamp_us {
+            if cached.sequence == seq {
                 return Ok(cached.base64.clone());
             }
         }
@@ -159,7 +162,7 @@ pub async fn get_frame(
         cache.insert(
             device_id,
             JpegCache {
-                timestamp_us: frame.timestamp_us,
+                sequence: seq,
                 base64: base64.clone(),
             },
         );
@@ -338,12 +341,13 @@ mod tests {
     }
 
     #[test]
-    fn jpeg_cache_returns_same_result_for_same_timestamp() {
+    fn jpeg_cache_returns_same_result_for_same_sequence() {
         let state = make_preview_state();
 
         // Insert a session with a frame
         let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
         session.buffer().push(make_rgb_frame(10, 10));
+        let seq = session.buffer().sequence();
         state.sessions.lock().insert("dev-1".to_string(), session);
 
         // Simulate first get_frame: compress and cache
@@ -356,15 +360,15 @@ mod tests {
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
             JpegCache {
-                timestamp_us: frame1.timestamp_us,
+                sequence: seq,
                 base64: b64.clone(),
             },
         );
 
-        // Simulate second get_frame: should hit cache
+        // Simulate second get_frame: should hit cache (same sequence)
         let cache = state.jpeg_cache.lock();
         let cached = cache.get("dev-1").unwrap();
-        assert_eq!(cached.timestamp_us, 1000);
+        assert_eq!(cached.sequence, 1);
         assert_eq!(cached.base64, b64);
     }
 
@@ -372,27 +376,25 @@ mod tests {
     fn jpeg_cache_invalidates_on_new_frame() {
         let state = make_preview_state();
 
-        // Seed cache with old timestamp
+        // Seed cache with old sequence
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
             JpegCache {
-                timestamp_us: 500,
+                sequence: 1,
                 base64: "old-data".to_string(),
             },
         );
 
-        // New frame with different timestamp
-        let frame = Frame {
-            data: vec![128u8; 300],
-            width: 10,
-            height: 10,
-            timestamp_us: 1000,
-        };
+        // Push a new frame — sequence advances to 2
+        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        session.buffer().push(make_rgb_frame(10, 10));
+        session.buffer().push(make_rgb_frame(10, 10));
+        let new_seq = session.buffer().sequence();
 
-        // Cache miss — timestamps differ
+        // Cache miss — sequences differ
         let cache = state.jpeg_cache.lock();
         let cached = cache.get("dev-1").unwrap();
-        assert_ne!(cached.timestamp_us, frame.timestamp_us);
+        assert_ne!(cached.sequence, new_seq);
     }
 
     #[test]
@@ -405,7 +407,7 @@ mod tests {
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
             JpegCache {
-                timestamp_us: 1000,
+                sequence: 1,
                 base64: "cached".to_string(),
             },
         );
