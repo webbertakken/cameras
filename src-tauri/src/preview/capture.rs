@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 #[cfg(target_os = "windows")]
@@ -32,6 +32,10 @@ pub struct FrameBuffer {
     frames: Mutex<Vec<Option<Arc<Frame>>>>,
     capacity: usize,
     write_idx: Mutex<usize>,
+    /// Monotonic counter incremented on each push — used for cache
+    /// invalidation even when camera timestamps are unreliable (e.g. OBS
+    /// Virtual Camera reports sample_time = 0 for every frame).
+    sequence: AtomicU64,
 }
 
 impl FrameBuffer {
@@ -42,6 +46,7 @@ impl FrameBuffer {
             frames: Mutex::new(frames),
             capacity,
             write_idx: Mutex::new(0),
+            sequence: AtomicU64::new(0),
         }
     }
 
@@ -51,6 +56,13 @@ impl FrameBuffer {
         let mut idx = self.write_idx.lock();
         frames[*idx] = Some(Arc::new(frame));
         *idx = (*idx + 1) % self.capacity;
+        self.sequence.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Return the monotonic sequence number. Increases by 1 for each
+    /// pushed frame, regardless of the frame's own timestamp.
+    pub fn sequence(&self) -> u64 {
+        self.sequence.load(Ordering::Relaxed)
     }
 
     /// Get the most recently pushed frame, if any.

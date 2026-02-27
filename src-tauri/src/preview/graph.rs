@@ -978,7 +978,8 @@ pub fn convert_bgr_bottom_up_to_rgb(bgr: &[u8], width: usize, height: usize) -> 
 /// Convert YUY2 (YUYV) packed data to RGB24.
 ///
 /// YUY2 stores two pixels per 4-byte macro-pixel: [Y0, U, Y1, V].
-/// Uses BT.601 conversion coefficients. Width must be even.
+/// Uses BT.601 conversion with fixed-point integer arithmetic (<<8)
+/// for performance on the DirectShow capture thread. Width must be even.
 pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> {
     let expected = width * height * 2;
     if yuy2.len() < expected || width == 0 || height == 0 {
@@ -987,18 +988,18 @@ pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> 
 
     let mut rgb = vec![0u8; width * height * 3];
     for i in 0..(width * height / 2) {
-        let y0 = yuy2[i * 4] as f32;
-        let u = yuy2[i * 4 + 1] as f32 - 128.0;
-        let y1 = yuy2[i * 4 + 2] as f32;
-        let v = yuy2[i * 4 + 3] as f32 - 128.0;
+        let y0 = yuy2[i * 4] as i32;
+        let u = yuy2[i * 4 + 1] as i32 - 128;
+        let y1 = yuy2[i * 4 + 2] as i32;
+        let v = yuy2[i * 4 + 3] as i32 - 128;
 
         let base = i * 6;
-        rgb[base] = (y0 + 1.402 * v).clamp(0.0, 255.0) as u8;
-        rgb[base + 1] = (y0 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
-        rgb[base + 2] = (y0 + 1.772 * u).clamp(0.0, 255.0) as u8;
-        rgb[base + 3] = (y1 + 1.402 * v).clamp(0.0, 255.0) as u8;
-        rgb[base + 4] = (y1 - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
-        rgb[base + 5] = (y1 + 1.772 * u).clamp(0.0, 255.0) as u8;
+        rgb[base] = ((y0 * 256 + 359 * v) >> 8).clamp(0, 255) as u8;
+        rgb[base + 1] = ((y0 * 256 - 88 * u - 183 * v) >> 8).clamp(0, 255) as u8;
+        rgb[base + 2] = ((y0 * 256 + 454 * u) >> 8).clamp(0, 255) as u8;
+        rgb[base + 3] = ((y1 * 256 + 359 * v) >> 8).clamp(0, 255) as u8;
+        rgb[base + 4] = ((y1 * 256 - 88 * u - 183 * v) >> 8).clamp(0, 255) as u8;
+        rgb[base + 5] = ((y1 * 256 + 454 * u) >> 8).clamp(0, 255) as u8;
     }
     rgb
 }
@@ -1007,7 +1008,8 @@ pub fn convert_yuy2_to_rgb(yuy2: &[u8], width: usize, height: usize) -> Vec<u8> 
 ///
 /// NV12 stores a full-resolution Y plane followed by an interleaved UV plane
 /// at half resolution in both dimensions (4:2:0 subsampling). Each 2x2 block
-/// of pixels shares one U,V pair. Uses BT.601 conversion coefficients.
+/// of pixels shares one U,V pair. Uses BT.601 conversion with fixed-point
+/// integer arithmetic (<<8) for performance on the DirectShow capture thread.
 pub fn convert_nv12_to_rgb(nv12: &[u8], width: usize, height: usize) -> Vec<u8> {
     let expected = width * height * 3 / 2;
     if nv12.len() < expected || width == 0 || height == 0 {
@@ -1021,15 +1023,15 @@ pub fn convert_nv12_to_rgb(nv12: &[u8], width: usize, height: usize) -> Vec<u8> 
 
     for row in 0..height {
         for col in 0..width {
-            let y = y_plane[row * width + col] as f32;
+            let y = y_plane[row * width + col] as i32;
             let uv_index = (row / 2) * width + (col / 2) * 2;
-            let u = uv_plane[uv_index] as f32 - 128.0;
-            let v = uv_plane[uv_index + 1] as f32 - 128.0;
+            let u = uv_plane[uv_index] as i32 - 128;
+            let v = uv_plane[uv_index + 1] as i32 - 128;
 
             let base = (row * width + col) * 3;
-            rgb[base] = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
-            rgb[base + 1] = (y - 0.344 * u - 0.714 * v).clamp(0.0, 255.0) as u8;
-            rgb[base + 2] = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+            rgb[base] = ((y * 256 + 359 * v) >> 8).clamp(0, 255) as u8;
+            rgb[base + 1] = ((y * 256 - 88 * u - 183 * v) >> 8).clamp(0, 255) as u8;
+            rgb[base + 2] = ((y * 256 + 454 * u) >> 8).clamp(0, 255) as u8;
         }
     }
 
