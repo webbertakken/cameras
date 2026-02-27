@@ -279,6 +279,11 @@ pub mod directshow {
         buffer: *mut u8,
         buffer_len: i32,
     ) -> HRESULT {
+        println!(
+            "[callback] buffer_cb called: time={sample_time}, buffer_null={}, len={buffer_len}",
+            buffer.is_null()
+        );
+
         let data = &*(this as *const FrameCallbackData);
 
         if !data.running.load(Ordering::Relaxed) {
@@ -310,6 +315,13 @@ pub mod directshow {
         }
 
         let rgb = convert_bgr_bottom_up_to_rgb(raw, width, height);
+
+        println!(
+            "[callback] pushing frame {}x{} ({} bytes)",
+            data.width,
+            data.height,
+            rgb.len()
+        );
 
         let timestamp_us = (sample_time * 1_000_000.0) as u64;
         let frame_bytes = rgb.len();
