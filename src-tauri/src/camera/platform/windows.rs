@@ -710,16 +710,75 @@ fn fourcc_to_string(guid: GUID) -> String {
     }
 }
 
+/// Context passed to the hotplug window procedure via GWLP_USERDATA.
+struct HotplugContext {
+    known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
+    callback: Box<dyn Fn(HotplugEvent) + Send>,
+}
+
+/// Diff known devices against a fresh enumeration, returning events for
+/// any connected or disconnected devices. Updates `known` in place.
+fn diff_devices(
+    known: &mut HashMap<String, CameraDevice>,
+    current: HashMap<String, CameraDevice>,
+) -> Vec<HotplugEvent> {
+    let mut events = Vec::new();
+
+    for (path, device) in &current {
+        if !known.contains_key(path) {
+            events.push(HotplugEvent::Connected(device.clone()));
+        }
+    }
+    for (path, device) in known.iter() {
+        if !current.contains_key(path) {
+            events.push(HotplugEvent::Disconnected {
+                id: device.id.clone(),
+            });
+        }
+    }
+
+    *known = current;
+    events
+}
+
+/// Re-enumerate devices and fire hotplug events for any changes.
+fn handle_device_change(ctx: &HotplugContext) {
+    let current_raw = match unsafe { enumerate_directshow_devices() } {
+        Ok(devs) => devs,
+        Err(e) => {
+            error!("Failed to re-enumerate devices during hotplug: {e}");
+            return;
+        }
+    };
+
+    let current: HashMap<String, CameraDevice> = current_raw
+        .iter()
+        .map(|raw| {
+            let dev = WindowsBackend::make_device(raw);
+            (dev.device_path.clone(), dev)
+        })
+        .collect();
+
+    let mut known = ctx.known_devices.lock().unwrap();
+    let events = diff_devices(&mut known, current);
+    drop(known);
+
+    for event in events {
+        info!("Hotplug event: {event:?}");
+        (ctx.callback)(event);
+    }
+}
+
 /// Run the hot-plug detection message loop.
 fn run_hotplug_loop(
-    _known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
-    _callback: Box<dyn Fn(HotplugEvent) + Send>,
+    known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
+    callback: Box<dyn Fn(HotplugEvent) + Send>,
 ) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
-        RegisterDeviceNotificationW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-        DEV_BROADCAST_DEVICEINTERFACE_W, HWND_MESSAGE, MSG, REGISTER_NOTIFICATION_FLAGS,
-        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        RegisterDeviceNotificationW, SetWindowLongPtrW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+        DEV_BROADCAST_DEVICEINTERFACE_W, GWLP_USERDATA, HWND_MESSAGE, MSG,
+        REGISTER_NOTIFICATION_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
     };
 
     unsafe {
@@ -750,6 +809,13 @@ fn run_hotplug_loop(
             None,
         )
         .map_err(|e| CameraError::Hotplug(format!("CreateWindowExW failed: {e}")))?;
+
+        // Store context on the HWND so wnd_proc can access it
+        let ctx = Box::new(HotplugContext {
+            known_devices,
+            callback,
+        });
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(ctx) as isize);
 
         // KSCATEGORY_VIDEO_CAMERA GUID
         let guid = GUID::from_values(
@@ -792,17 +858,16 @@ unsafe extern "system" fn hotplug_wnd_proc(
     wparam: windows::Win32::Foundation::WPARAM,
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_DEVICECHANGE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, GetWindowLongPtrW, GWLP_USERDATA, WM_DEVICECHANGE,
+    };
 
-    if msg == WM_DEVICECHANGE {
-        match wparam.0 {
-            0x8000 => {
-                info!("Device arrival detected");
-            }
-            0x8004 => {
-                info!("Device removal detected");
-            }
-            _ => {}
+    // DBT_DEVICEARRIVAL = 0x8000, DBT_DEVICEREMOVECOMPLETE = 0x8004
+    if msg == WM_DEVICECHANGE && (wparam.0 == 0x8000 || wparam.0 == 0x8004) {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if ptr != 0 {
+            let ctx = &*(ptr as *const HotplugContext);
+            handle_device_change(ctx);
         }
     }
 
@@ -1172,5 +1237,90 @@ mod tests {
             [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71],
         );
         assert_eq!(fourcc_to_string(yuy2_guid), "YUY2");
+    }
+
+    // --- diff_devices tests ---
+
+    fn make_test_device(path: &str, name: &str) -> CameraDevice {
+        CameraDevice {
+            id: DeviceId::new(name),
+            name: name.to_string(),
+            device_path: path.to_string(),
+            is_connected: true,
+        }
+    }
+
+    #[test]
+    fn diff_devices_detects_new_device() {
+        let mut known = HashMap::new();
+        let mut current = HashMap::new();
+        let dev = make_test_device("path_a", "Camera A");
+        current.insert("path_a".to_string(), dev);
+
+        let events = diff_devices(&mut known, current);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], HotplugEvent::Connected(d) if d.name == "Camera A"));
+        assert_eq!(known.len(), 1);
+    }
+
+    #[test]
+    fn diff_devices_detects_removed_device() {
+        let mut known = HashMap::new();
+        let dev = make_test_device("path_b", "Camera B");
+        known.insert("path_b".to_string(), dev);
+        let current = HashMap::new();
+
+        let events = diff_devices(&mut known, current);
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], HotplugEvent::Disconnected { id } if id.as_str() == "Camera B")
+        );
+        assert!(known.is_empty());
+    }
+
+    #[test]
+    fn diff_devices_no_changes() {
+        let dev = make_test_device("path_c", "Camera C");
+        let mut known = HashMap::from([("path_c".to_string(), dev.clone())]);
+        let current = HashMap::from([("path_c".to_string(), dev)]);
+
+        let events = diff_devices(&mut known, current);
+
+        assert!(events.is_empty());
+        assert_eq!(known.len(), 1);
+    }
+
+    #[test]
+    fn diff_devices_simultaneous_add_and_remove() {
+        let old_dev = make_test_device("path_old", "Old Camera");
+        let new_dev = make_test_device("path_new", "New Camera");
+        let mut known = HashMap::from([("path_old".to_string(), old_dev)]);
+        let current = HashMap::from([("path_new".to_string(), new_dev)]);
+
+        let events = diff_devices(&mut known, current);
+
+        assert_eq!(events.len(), 2);
+        let has_connect = events
+            .iter()
+            .any(|e| matches!(e, HotplugEvent::Connected(d) if d.name == "New Camera"));
+        let has_disconnect = events
+            .iter()
+            .any(|e| matches!(e, HotplugEvent::Disconnected { id } if id.as_str() == "Old Camera"));
+        assert!(has_connect, "Expected Connected event for New Camera");
+        assert!(has_disconnect, "Expected Disconnected event for Old Camera");
+        assert_eq!(known.len(), 1);
+        assert!(known.contains_key("path_new"));
+    }
+
+    #[test]
+    fn diff_devices_both_empty() {
+        let mut known = HashMap::new();
+        let current = HashMap::new();
+
+        let events = diff_devices(&mut known, current);
+
+        assert!(events.is_empty());
     }
 }
