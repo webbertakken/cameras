@@ -5,10 +5,18 @@ import { useCameraStore } from './store'
 
 const mockUnlisten = vi.fn()
 const mockOnCameraHotplug = vi.fn()
+const mockUnlistenSettings = vi.fn()
 
 vi.mock('./api', () => ({
   onCameraHotplug: (...args: unknown[]) => mockOnCameraHotplug(...args),
 }))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(),
+}))
+
+const { listen } = await import('@tauri-apps/api/event')
+const mockListen = vi.mocked(listen)
 
 import { useHotplug } from './useHotplug'
 
@@ -16,6 +24,7 @@ describe('useHotplug', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockOnCameraHotplug.mockResolvedValue(mockUnlisten)
+    mockListen.mockResolvedValue(mockUnlistenSettings)
     useCameraStore.setState({ cameras: [], selectedId: null })
     useToastStore.setState({ toasts: [] })
   })
@@ -129,5 +138,72 @@ describe('useHotplug', () => {
       message: 'Camera disconnected',
       type: 'info',
     })
+  })
+
+  // --- Settings restored ---
+
+  it('subscribes to settings-restored events on mount', () => {
+    renderHook(() => useHotplug())
+    expect(mockListen).toHaveBeenCalledWith('settings-restored', expect.any(Function))
+  })
+
+  it('shows success toast when settings-restored event received with controlsApplied > 0', async () => {
+    mockListen.mockImplementation(((
+      event: string,
+      callback: (event: { payload: unknown }) => void,
+    ) => {
+      if (event === 'settings-restored') {
+        callback({
+          payload: {
+            deviceId: 'cam-1',
+            cameraName: 'Logitech C920',
+            controlsApplied: 5,
+          },
+        })
+      }
+      return Promise.resolve(mockUnlistenSettings)
+    }) as unknown as typeof listen)
+
+    renderHook(() => useHotplug())
+
+    const toasts = useToastStore.getState().toasts
+    const settingsToast = toasts.find((t) => t.message.includes('Settings restored'))
+    expect(settingsToast).toBeDefined()
+    expect(settingsToast).toMatchObject({ type: 'success' })
+  })
+
+  it('does not show toast when controlsApplied is 0', () => {
+    mockListen.mockImplementation(((
+      event: string,
+      callback: (event: { payload: unknown }) => void,
+    ) => {
+      if (event === 'settings-restored') {
+        callback({
+          payload: {
+            deviceId: 'cam-1',
+            cameraName: 'Logitech C920',
+            controlsApplied: 0,
+          },
+        })
+      }
+      return Promise.resolve(mockUnlistenSettings)
+    }) as unknown as typeof listen)
+
+    renderHook(() => useHotplug())
+
+    const toasts = useToastStore.getState().toasts
+    const settingsToast = toasts.find((t) => t.message.includes('Settings restored'))
+    expect(settingsToast).toBeUndefined()
+  })
+
+  it('unsubscribes from settings-restored on unmount', async () => {
+    const { unmount } = renderHook(() => useHotplug())
+
+    await vi.waitFor(() => {
+      expect(mockListen).toHaveBeenCalled()
+    })
+
+    unmount()
+    expect(mockUnlistenSettings).toHaveBeenCalled()
   })
 })

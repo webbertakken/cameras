@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ControlDescriptor } from '../../types/camera'
-import { getCameraControls, resetCameraControl, setCameraControl } from './api'
+import {
+  getCameraControls,
+  getSavedSettings,
+  resetAllToDefaults,
+  resetCameraControl,
+  setCameraControl,
+} from './api'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -58,5 +64,30 @@ describe('controls API', () => {
   it('propagates backend errors as rejected promises', async () => {
     mockInvoke.mockRejectedValueOnce(new Error('Device not found'))
     await expect(getCameraControls('nonexistent')).rejects.toThrow('Device not found')
+  })
+
+  it('calls reset_to_defaults and returns array of reset results', async () => {
+    const results = [
+      { controlId: 'brightness', value: 128 },
+      { controlId: 'contrast', value: 64 },
+    ]
+    mockInvoke.mockResolvedValueOnce(results)
+    const result = await resetAllToDefaults('cam-1')
+    expect(mockInvoke).toHaveBeenCalledWith('reset_to_defaults', { deviceId: 'cam-1' })
+    expect(result).toEqual(results)
+  })
+
+  it('calls get_saved_settings and returns settings or null', async () => {
+    const settings = { name: 'Test Cam', controls: { brightness: 200 } }
+    mockInvoke.mockResolvedValueOnce(settings)
+    const result = await getSavedSettings('cam-1')
+    expect(mockInvoke).toHaveBeenCalledWith('get_saved_settings', { deviceId: 'cam-1' })
+    expect(result).toEqual(settings)
+  })
+
+  it('returns null when no saved settings exist', async () => {
+    mockInvoke.mockResolvedValueOnce(null)
+    const result = await getSavedSettings('cam-1')
+    expect(result).toBeNull()
   })
 })
