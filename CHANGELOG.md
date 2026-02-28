@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/webbertakken/cameras/compare/v0.4.0...v0.5.0) (2026-02-28)
+
+
+### Features
+
+* **settings:** add settings persistence with auto-save, auto-apply, and reset ([#43](https://github.com/webbertakken/cameras/issues/43)) ([fd63f7c](https://github.com/webbertakken/cameras/commit/fd63f7c10426df86d2eafa2607feac7b69bacdd9))
+
+
+### Performance improvements
+
+* **preview:** optimise capture pipeline for real-time preview ([#41](https://github.com/webbertakken/cameras/issues/41)) ([4f32a42](https://github.com/webbertakken/cameras/commit/4f32a420f979ce6e9f5968fdd416cc0ecc0789d2))
+
 ## [0.4.0](https://github.com/webbertakken/cameras/compare/v0.3.1...v0.4.0) (2026-02-27)
 
 
