@@ -83,7 +83,7 @@ impl SettingsStore {
     /// between `save()` completing and `notified().await` re-registering.
     pub fn start_debounce_task(self: &Arc<Self>) {
         let store = Arc::clone(self);
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 store.save_notify.notified().await;
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
