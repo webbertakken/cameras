@@ -80,14 +80,18 @@ impl SettingsStore {
     /// Start the debounce task — waits for dirty notification, sleeps 500ms, then saves.
     ///
     /// Uses an `AtomicBool` dirty flag to avoid losing notifications that arrive
-    /// between `save()` completing and `notified().await` re-registering.
+    /// between `save()` completing and `notified().await` re-registering. The
+    /// inner `while` loop drains all pending changes so a notification during
+    /// `save()` is never lost.
     pub fn start_debounce_task(self: &Arc<Self>) {
         let store = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             loop {
                 store.save_notify.notified().await;
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if store.is_dirty.swap(false, Ordering::AcqRel) {
+
+                // Drain: keep saving until no more changes arrive during save
+                while store.is_dirty.swap(false, Ordering::AcqRel) {
                     if let Err(e) = store.save() {
                         tracing::warn!("Failed to save settings: {e}");
                     }
@@ -320,5 +324,50 @@ mod tests {
         let (store, _dir) = temp_store();
         store.remove_camera("nonexistent"); // should not panic
         store.remove_camera("nonexistent"); // still should not panic
+    }
+
+    // --- Dirty flag tests (debounce race window fix) ---
+
+    #[test]
+    fn set_control_sets_dirty_flag() {
+        let (store, _dir) = temp_store();
+        assert!(!store.is_dirty.load(Ordering::Acquire));
+        store.set_control("dev-1", "Camera", "brightness", 100);
+        assert!(store.is_dirty.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn remove_camera_sets_dirty_flag() {
+        let (store, _dir) = temp_store();
+        store.set_control("dev-1", "Camera", "brightness", 100);
+        store.is_dirty.store(false, Ordering::Release);
+        store.remove_camera("dev-1");
+        assert!(store.is_dirty.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn change_during_save_is_not_lost() {
+        let (store, dir) = temp_store();
+
+        // Simulate the debounce drain loop: set dirty, swap-and-save, then
+        // make a new change before the loop re-checks the flag.
+        store.set_control("dev-1", "Camera", "brightness", 100);
+        assert!(store.is_dirty.swap(false, Ordering::AcqRel));
+        store.save().unwrap();
+
+        // Simulate a change arriving during the save-to-recheck gap
+        store.set_control("dev-1", "Camera", "brightness", 200);
+
+        // The drain loop re-checks is_dirty — it must still be true
+        assert!(
+            store.is_dirty.swap(false, Ordering::AcqRel),
+            "change during save must keep dirty flag set"
+        );
+        store.save().unwrap();
+
+        // Verify the latest value was persisted
+        let path = dir.path().join("cameras.json");
+        let loaded = SettingsStore::load(&path).unwrap();
+        assert_eq!(loaded.cameras["dev-1"].controls["brightness"], 200);
     }
 }
