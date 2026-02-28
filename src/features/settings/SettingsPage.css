@@ -1,0 +1,8 @@
+.settings-page {
+  padding: var(--space-6);
+}
+
+.settings-page__heading {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
