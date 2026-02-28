@@ -8,6 +8,14 @@ pub struct CameraSettings {
     pub controls: HashMap<String, i32>,
 }
 
+/// Result of resetting a single control to its hardware default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetResult {
+    pub control_id: String,
+    pub value: i32,
+}
+
 /// Top-level settings file structure — maps device IDs to camera settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SettingsFile {
@@ -17,6 +25,30 @@ pub struct SettingsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_result_serialises_to_camel_case_json() {
+        let result = ResetResult {
+            control_id: "brightness".to_string(),
+            value: 128,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["controlId"], "brightness");
+        assert_eq!(json["value"], 128);
+        // Must not use snake_case field names
+        assert!(json.get("control_id").is_none());
+    }
+
+    #[test]
+    fn reset_result_round_trips_through_json() {
+        let result = ResetResult {
+            control_id: "contrast".to_string(),
+            value: 50,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: ResetResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
 
     #[test]
     fn camera_settings_default_is_empty() {

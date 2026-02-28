@@ -112,13 +112,13 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
 
   const handleChange = useCallback(
     (controlId: string, newValue: number) => {
-      if (!cameraId) return
+      if (!cameraId || !cameraName) return
 
       const previousValue = values[controlId]?.value
 
       dispatch({ type: 'set_value', controlId, value: newValue })
 
-      setCameraControl(cameraId, controlId, newValue).catch((err: unknown) => {
+      setCameraControl(cameraId, controlId, newValue, cameraName).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Control rejected by hardware'
         dispatch({
           type: 'set_error',
@@ -128,7 +128,7 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
         })
       })
     },
-    [cameraId, values],
+    [cameraId, cameraName, values],
   )
 
   const handleResetAll = useCallback((results: ResetResult[]) => {

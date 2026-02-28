@@ -51,6 +51,7 @@ pub async fn set_camera_control(
     device_id: String,
     control_id: String,
     value: i32,
+    camera_name: String,
 ) -> Result<(), String> {
     let id = DeviceId::new(&device_id);
     let control = parse_control_id(&control_id)?;
@@ -76,14 +77,6 @@ pub async fn set_camera_control(
         .backend
         .set_control(&id, &control, clamped)
         .map_err(|e| e.to_string())?;
-
-    // Look up the camera name for persistence
-    let camera_name = state
-        .backend
-        .enumerate_devices()
-        .ok()
-        .and_then(|devices| devices.iter().find(|d| d.id == id).map(|d| d.name.clone()))
-        .unwrap_or_default();
 
     settings_state
         .store

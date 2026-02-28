@@ -39,7 +39,7 @@ pub fn start_hotplug_watcher(app_handle: &AppHandle, backend: &dyn CameraBackend
                         serde_json::json!({
                             "deviceId": device.id.as_str(),
                             "cameraName": device.name,
-                            "controlCount": applied.len(),
+                            "controlsApplied": applied.len(),
                         }),
                     );
                 }
@@ -220,6 +220,27 @@ mod tests {
         let events = received_events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], "disconnected");
+    }
+
+    #[test]
+    fn settings_restored_payload_uses_controls_applied_field_name() {
+        let payload = serde_json::json!({
+            "deviceId": "test:001",
+            "cameraName": "Test Camera",
+            "controlsApplied": 3,
+        });
+        // Verify the field names match the frontend SettingsRestoredPayload type
+        assert!(
+            payload.get("controlsApplied").is_some(),
+            "must use 'controlsApplied' not 'controlCount'"
+        );
+        assert!(
+            payload.get("controlCount").is_none(),
+            "must not use 'controlCount'"
+        );
+        assert_eq!(payload["controlsApplied"], 3);
+        assert_eq!(payload["deviceId"], "test:001");
+        assert_eq!(payload["cameraName"], "Test Camera");
     }
 
     #[test]

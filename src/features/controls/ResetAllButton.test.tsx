@@ -124,4 +124,30 @@ describe('ResetAllButton', () => {
     render(<ResetAllButton {...defaultProps} />)
     expect(screen.getByRole('button', { name: /reset all to defaults/i })).not.toBeDisabled()
   })
+
+  it('disables confirm button while resetting to prevent double-submit', async () => {
+    const user = userEvent.setup()
+    // Use a promise that never resolves to keep the resetting state active
+    let resolveReset: (value: { controlId: string; value: number }[]) => void = () => {}
+    mockResetAll.mockReturnValue(
+      new Promise((resolve) => {
+        resolveReset = resolve
+      }),
+    )
+
+    render(<ResetAllButton {...defaultProps} />)
+    await user.click(screen.getByRole('button', { name: /reset all to defaults/i }))
+
+    // Click confirm to start resetting
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+
+    // While resetting, both buttons should be disabled
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Resetting...' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    })
+
+    // Clean up by resolving the promise
+    resolveReset([{ controlId: 'brightness', value: 128 }])
+  })
 })

@@ -77,4 +77,30 @@ describe('ConfirmModal', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Keep' })).toBeInTheDocument()
   })
+
+  it('disables both buttons when confirmDisabled is true', () => {
+    render(<ConfirmModal {...defaultProps} confirmDisabled />)
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled()
+  })
+
+  it('does not disable buttons when confirmDisabled is false', () => {
+    render(<ConfirmModal {...defaultProps} confirmDisabled={false} />)
+    expect(screen.getByRole('button', { name: /confirm/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /cancel/i })).not.toBeDisabled()
+  })
+
+  it('does not re-register escape handler when onCancel reference changes', async () => {
+    const user = userEvent.setup()
+    const onCancel1 = vi.fn()
+    const onCancel2 = vi.fn()
+
+    const { rerender } = render(<ConfirmModal {...defaultProps} onCancel={onCancel1} />)
+    rerender(<ConfirmModal {...defaultProps} onCancel={onCancel2} />)
+
+    await user.keyboard('{Escape}')
+    // Should call the latest onCancel, not the first one
+    expect(onCancel2).toHaveBeenCalledOnce()
+    expect(onCancel1).not.toHaveBeenCalled()
+  })
 })

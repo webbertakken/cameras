@@ -6,6 +6,7 @@ use crate::camera::backend::CameraBackend;
 use crate::camera::commands::CameraState;
 use crate::camera::types::{ControlId, ControlValue, DeviceId};
 use crate::settings::store::SettingsStore;
+use crate::settings::types::ResetResult;
 
 /// Tauri-managed state wrapping the settings store.
 pub struct SettingsState {
@@ -74,7 +75,7 @@ pub async fn reset_to_defaults(
     camera_state: State<'_, CameraState>,
     settings_state: State<'_, SettingsState>,
     device_id: String,
-) -> Result<Vec<(String, i32)>, String> {
+) -> Result<Vec<ResetResult>, String> {
     let id = DeviceId::new(&device_id);
     let descriptors = camera_state
         .backend
@@ -100,7 +101,10 @@ pub async fn reset_to_defaults(
             .set_control(&id, &control, clamped)
             .map_err(|e| e.to_string())?;
 
-        reset_values.push((desc.id.clone(), default_val));
+        reset_values.push(ResetResult {
+            control_id: desc.id.clone(),
+            value: default_val,
+        });
     }
 
     settings_state.store.remove_camera(&device_id);
@@ -127,6 +131,7 @@ mod tests {
         DeviceId, FormatDescriptor, HotplugEvent,
     };
     use crate::settings::store::SettingsStore;
+    use crate::settings::types::ResetResult;
     use std::sync::Mutex;
 
     /// Mock backend that tracks set_control calls for verification.
@@ -248,13 +253,10 @@ mod tests {
         }
     }
 
-    fn temp_store() -> SettingsStore {
+    fn temp_store() -> (SettingsStore, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("cameras.json");
-        // Leak the TempDir to keep it alive for the test
-        let dir = Box::leak(Box::new(dir));
-        let _ = dir;
-        SettingsStore::new(path)
+        (SettingsStore::new(path), dir)
     }
 
     // --- Apply saved settings tests (Step 5) ---
@@ -265,7 +267,7 @@ mod tests {
             make_brightness_control(Some(128)),
             make_contrast_control(Some(50)),
         ]);
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.set_control("test-device", "Camera", "brightness", 200);
         store.set_control("test-device", "Camera", "contrast", 80);
 
@@ -279,7 +281,7 @@ mod tests {
     #[test]
     fn apply_saved_settings_skips_unknown_controls() {
         let backend = MockBackend::new(vec![make_brightness_control(Some(128))]);
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.set_control("test-device", "Camera", "brightness", 200);
         store.set_control("test-device", "Camera", "nonexistent_control", 42);
 
@@ -292,7 +294,7 @@ mod tests {
     #[test]
     fn apply_saved_settings_does_nothing_when_no_saved_settings() {
         let backend = MockBackend::new(vec![make_brightness_control(Some(128))]);
-        let store = temp_store();
+        let (store, _dir) = temp_store();
 
         let applied = apply_saved_settings(&backend, &store, "test-device");
         assert!(applied.is_empty());
@@ -307,7 +309,7 @@ mod tests {
         ])
         .with_failing_controls(vec!["brightness".to_string()]);
 
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.set_control("test-device", "Camera", "brightness", 200);
         store.set_control("test-device", "Camera", "contrast", 80);
 
@@ -326,7 +328,7 @@ mod tests {
             make_brightness_control(Some(128)),
             make_contrast_control(Some(50)),
         ]);
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.set_control("test-device", "Camera", "brightness", 200);
         store.set_control("test-device", "Camera", "contrast", 80);
 
@@ -340,7 +342,10 @@ mod tests {
                 let control = ControlId::from_str_id(&desc.id).unwrap();
                 let clamped = ControlValue::new(default_val, desc.min, desc.max);
                 backend.set_control(&id, &control, clamped).unwrap();
-                reset_values.push((desc.id.clone(), default_val));
+                reset_values.push(ResetResult {
+                    control_id: desc.id.clone(),
+                    value: default_val,
+                });
             }
         }
         store.remove_camera("test-device");
@@ -388,7 +393,7 @@ mod tests {
 
     #[test]
     fn reset_to_defaults_clears_saved_settings_for_device() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.set_control("test-device", "Camera", "brightness", 200);
         assert!(store.get_camera("test-device").is_some());
 

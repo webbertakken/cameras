@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -10,7 +11,8 @@ use crate::settings::types::SettingsFile;
 pub struct SettingsStore {
     path: PathBuf,
     data: Mutex<SettingsFile>,
-    dirty: Notify,
+    save_notify: Notify,
+    is_dirty: AtomicBool,
 }
 
 impl SettingsStore {
@@ -20,7 +22,8 @@ impl SettingsStore {
         Self {
             path,
             data: Mutex::new(data),
-            dirty: Notify::new(),
+            save_notify: Notify::new(),
+            is_dirty: AtomicBool::new(false),
         }
     }
 
@@ -63,24 +66,31 @@ impl SettingsStore {
             entry.name = camera_name.to_string();
             entry.controls.insert(control_id.to_string(), value);
         }
-        self.dirty.notify_one();
+        self.is_dirty.store(true, Ordering::Release);
+        self.save_notify.notify_one();
     }
 
     /// Remove all saved settings for a camera.
     pub fn remove_camera(&self, device_id: &str) {
         self.data.lock().cameras.remove(device_id);
-        self.dirty.notify_one();
+        self.is_dirty.store(true, Ordering::Release);
+        self.save_notify.notify_one();
     }
 
     /// Start the debounce task — waits for dirty notification, sleeps 500ms, then saves.
+    ///
+    /// Uses an `AtomicBool` dirty flag to avoid losing notifications that arrive
+    /// between `save()` completing and `notified().await` re-registering.
     pub fn start_debounce_task(self: &Arc<Self>) {
         let store = Arc::clone(self);
         tokio::spawn(async move {
             loop {
-                store.dirty.notified().await;
+                store.save_notify.notified().await;
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Err(e) = store.save() {
-                    tracing::warn!("Failed to save settings: {e}");
+                if store.is_dirty.swap(false, Ordering::AcqRel) {
+                    if let Err(e) = store.save() {
+                        tracing::warn!("Failed to save settings: {e}");
+                    }
                 }
             }
         });

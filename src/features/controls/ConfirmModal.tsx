@@ -8,6 +8,7 @@ interface ConfirmModalProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  confirmDisabled?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -18,6 +19,7 @@ export function ConfirmModal({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -25,6 +27,10 @@ export function ConfirmModal({
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
   const previousFocusRef = useRef<Element | null>(null)
+  const onCancelRef = useRef(onCancel)
+  useEffect(() => {
+    onCancelRef.current = onCancel
+  }, [onCancel])
 
   useEffect(() => {
     if (open) {
@@ -37,7 +43,7 @@ export function ConfirmModal({
 
       const handleEscape = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
-          onCancel()
+          onCancelRef.current()
         }
       }
       document.addEventListener('keydown', handleEscape)
@@ -53,7 +59,7 @@ export function ConfirmModal({
       previousFocusRef.current.focus()
     }
     return undefined
-  }, [open, onCancel])
+  }, [open])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Focus trap: Tab/Shift+Tab cycles between buttons
@@ -95,6 +101,7 @@ export function ConfirmModal({
             type="button"
             className="confirm-modal__btn confirm-modal__btn--cancel"
             onClick={onCancel}
+            disabled={confirmDisabled}
           >
             {cancelLabel}
           </button>
@@ -103,6 +110,7 @@ export function ConfirmModal({
             type="button"
             className="confirm-modal__btn confirm-modal__btn--confirm"
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
             {confirmLabel}
           </button>

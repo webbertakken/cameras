@@ -47,6 +47,7 @@ export function ResetAllButton({ cameraId, cameraName, onReset }: ResetAllButton
         message={`All controls for ${cameraName} will be reset to their hardware defaults. This cannot be undone.`}
         confirmLabel={resetting ? 'Resetting...' : 'Reset'}
         cancelLabel="Cancel"
+        confirmDisabled={resetting}
         onConfirm={handleConfirm}
         onCancel={handleCancel}
       />

@@ -43,11 +43,12 @@ describe('controls API', () => {
 
   it('calls set_camera_control with correct IPC args', async () => {
     mockInvoke.mockResolvedValueOnce(undefined)
-    await setCameraControl('cam-1', 'brightness', 200)
+    await setCameraControl('cam-1', 'brightness', 200, 'Test Camera')
     expect(mockInvoke).toHaveBeenCalledWith('set_camera_control', {
       deviceId: 'cam-1',
       controlId: 'brightness',
       value: 200,
+      cameraName: 'Test Camera',
     })
   })
 

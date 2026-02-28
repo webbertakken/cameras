@@ -11,8 +11,9 @@ export async function setCameraControl(
   deviceId: string,
   controlId: string,
   value: number,
+  cameraName: string,
 ): Promise<void> {
-  return invoke('set_camera_control', { deviceId, controlId, value })
+  return invoke('set_camera_control', { deviceId, controlId, value, cameraName })
 }
 
 /** Reset a camera control to its hardware default. Returns the default value. */

@@ -140,7 +140,7 @@ describe('ControlsPanel', () => {
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(mockSetControl).toHaveBeenCalledWith('cam-1', 'brightness', 200)
+      expect(mockSetControl).toHaveBeenCalledWith('cam-1', 'brightness', 200, 'Test Cam')
     })
   })
 
