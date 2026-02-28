@@ -1,14 +1,12 @@
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager};
 
 /// Identifiers for tray menu items.
-const MENU_ID_CAMERA_LABEL: &str = "camera-label";
-const MENU_ID_OPEN_PANEL: &str = "open-panel";
+const MENU_ID_SHOW_HIDE: &str = "show-hide";
+const MENU_ID_APP_SETTINGS: &str = "app-settings";
 const MENU_ID_QUIT: &str = "quit";
-
-/// Default label shown when no camera is active.
-const DEFAULT_CAMERA_LABEL: &str = "Active Camera: None";
 
 /// Show the main window and give it focus.
 fn show_main_window(app: &AppHandle) {
@@ -26,45 +24,72 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
+/// Toggle main window visibility: show if hidden, hide if visible.
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            hide_main_window(app);
+        } else {
+            show_main_window(app);
+        }
+    }
+}
+
+/// Open the app settings window, or focus it if already open.
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.set_focus();
+        return;
+    }
+
+    let builder = WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("index.html#settings".into()),
+    )
+    .title("App Settings")
+    .inner_size(500.0, 400.0)
+    .resizable(true)
+    .center();
+
+    if let Err(e) = builder.build() {
+        tracing::error!("Failed to open settings window: {e}");
+    }
+}
+
 /// Build and register the system tray for the application.
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let camera_label = MenuItemBuilder::with_id(MENU_ID_CAMERA_LABEL, DEFAULT_CAMERA_LABEL)
-        .enabled(false)
-        .build(app)?;
-
-    let separator = PredefinedMenuItem::separator(app)?;
-
-    let open_panel = MenuItemBuilder::with_id(MENU_ID_OPEN_PANEL, "Open Panel").build(app)?;
-    let quit = MenuItemBuilder::with_id(MENU_ID_QUIT, "Quit").build(app)?;
+    let show_hide = MenuItemBuilder::with_id(MENU_ID_SHOW_HIDE, "Show/Hide").build(app)?;
+    let app_settings = MenuItemBuilder::with_id(MENU_ID_APP_SETTINGS, "App Settings").build(app)?;
+    let quit = MenuItemBuilder::with_id(MENU_ID_QUIT, "Exit").build(app)?;
 
     let menu = MenuBuilder::new(app)
-        .item(&camera_label)
-        .item(&separator)
-        .item(&open_panel)
+        .item(&show_hide)
+        .item(&app_settings)
         .item(&quit)
         .build()?;
 
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().cloned().unwrap())
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {
             let id = event.id().as_ref();
             match id {
-                "open-panel" => show_main_window(app),
+                "show-hide" => toggle_main_window(app),
+                "app-settings" => open_settings_window(app),
                 "quit" => app.exit(0),
                 _ => {}
             }
         })
         .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        hide_main_window(app);
-                    } else {
-                        show_main_window(app);
-                    }
-                }
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
             }
         })
         .build(app)?;
@@ -79,9 +104,9 @@ mod tests {
     /// Testable representation of menu items (id, label).
     fn menu_item_defs() -> Vec<(&'static str, &'static str)> {
         vec![
-            (MENU_ID_CAMERA_LABEL, DEFAULT_CAMERA_LABEL),
-            (MENU_ID_OPEN_PANEL, "Open Panel"),
-            (MENU_ID_QUIT, "Quit"),
+            (MENU_ID_SHOW_HIDE, "Show/Hide"),
+            (MENU_ID_APP_SETTINGS, "App Settings"),
+            (MENU_ID_QUIT, "Exit"),
         ]
     }
 
@@ -90,27 +115,27 @@ mod tests {
         let defs = menu_item_defs();
 
         assert_eq!(defs.len(), 3);
-        assert_eq!(defs[0], (MENU_ID_CAMERA_LABEL, DEFAULT_CAMERA_LABEL));
-        assert_eq!(defs[1], (MENU_ID_OPEN_PANEL, "Open Panel"));
-        assert_eq!(defs[2], (MENU_ID_QUIT, "Quit"));
+        assert_eq!(defs[0], (MENU_ID_SHOW_HIDE, "Show/Hide"));
+        assert_eq!(defs[1], (MENU_ID_APP_SETTINGS, "App Settings"));
+        assert_eq!(defs[2], (MENU_ID_QUIT, "Exit"));
     }
 
     #[test]
-    fn menu_has_camera_label_item() {
+    fn menu_has_show_hide_item() {
         let defs = menu_item_defs();
-        let camera = defs.iter().find(|(id, _)| *id == MENU_ID_CAMERA_LABEL);
+        let item = defs.iter().find(|(id, _)| *id == MENU_ID_SHOW_HIDE);
 
-        assert!(camera.is_some());
-        assert_eq!(camera.unwrap().1, "Active Camera: None");
+        assert!(item.is_some());
+        assert_eq!(item.unwrap().1, "Show/Hide");
     }
 
     #[test]
-    fn menu_has_open_panel_item() {
+    fn menu_has_app_settings_item() {
         let defs = menu_item_defs();
-        let open = defs.iter().find(|(id, _)| *id == MENU_ID_OPEN_PANEL);
+        let item = defs.iter().find(|(id, _)| *id == MENU_ID_APP_SETTINGS);
 
-        assert!(open.is_some());
-        assert_eq!(open.unwrap().1, "Open Panel");
+        assert!(item.is_some());
+        assert_eq!(item.unwrap().1, "App Settings");
     }
 
     #[test]
@@ -119,19 +144,6 @@ mod tests {
         let quit = defs.iter().find(|(id, _)| *id == MENU_ID_QUIT);
 
         assert!(quit.is_some());
-        assert_eq!(quit.unwrap().1, "Quit");
-    }
-
-    #[test]
-    fn default_camera_label_shows_none() {
-        assert_eq!(DEFAULT_CAMERA_LABEL, "Active Camera: None");
-    }
-
-    #[test]
-    fn camera_label_format_with_name() {
-        let camera_name = "Logitech C920";
-        let label = format!("Active Camera: {camera_name}");
-
-        assert_eq!(label, "Active Camera: Logitech C920");
+        assert_eq!(quit.unwrap().1, "Exit");
     }
 }
