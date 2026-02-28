@@ -8,6 +8,8 @@ vi.mock('./api', () => ({
   getCameraControls: vi.fn(),
   setCameraControl: vi.fn(),
   resetCameraControl: vi.fn(),
+  resetAllToDefaults: vi.fn(),
+  getSavedSettings: vi.fn(),
 }))
 
 const { getCameraControls, setCameraControl, resetCameraControl } = await import('./api')
@@ -138,7 +140,7 @@ describe('ControlsPanel', () => {
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(mockSetControl).toHaveBeenCalledWith('cam-1', 'brightness', 200)
+      expect(mockSetControl).toHaveBeenCalledWith('cam-1', 'brightness', 200, 'Test Cam')
     })
   })
 
@@ -170,10 +172,10 @@ describe('ControlsPanel', () => {
     render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /reset/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reset Brightness' })).toBeInTheDocument()
     })
 
-    await user.click(screen.getByRole('button', { name: /reset/i }))
+    await user.click(screen.getByRole('button', { name: 'Reset Brightness' }))
 
     await waitFor(() => {
       expect(mockResetControl).toHaveBeenCalledWith('cam-1', 'brightness')
@@ -190,7 +192,7 @@ describe('ControlsPanel', () => {
       expect(screen.getByText('150')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByRole('button', { name: /reset/i }))
+    await user.click(screen.getByRole('button', { name: 'Reset Brightness' }))
 
     await waitFor(() => {
       expect(screen.getByText('128')).toBeInTheDocument()
@@ -222,5 +224,26 @@ describe('ControlsPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('region', { name: 'Camera controls' })).toBeInTheDocument()
     })
+  })
+
+  // --- Reset all ---
+
+  it('renders "Reset all to defaults" button when controls are loaded', async () => {
+    mockGetControls.mockResolvedValue(allControls)
+    render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /reset all to defaults/i })).toBeInTheDocument()
+    })
+  })
+
+  it('does not render reset-all button when no camera is selected', () => {
+    render(<ControlsPanel cameraId={null} cameraName={null} />)
+    expect(screen.queryByRole('button', { name: /reset all to defaults/i })).not.toBeInTheDocument()
+  })
+
+  it('does not render reset-all button when loading', () => {
+    mockGetControls.mockReturnValue(new Promise(() => {}))
+    render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
+    expect(screen.queryByRole('button', { name: /reset all to defaults/i })).not.toBeInTheDocument()
   })
 })

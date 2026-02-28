@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Stable camera identifier (VID:PID + serial or hash of device path).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(String);
 
 impl DeviceId {
@@ -641,6 +641,23 @@ mod tests {
         assert_eq!(ControlId::from_str_id("nonexistent"), None);
         assert_eq!(ControlId::from_str_id(""), None);
         assert_eq!(ControlId::from_str_id("Brightness"), None);
+    }
+
+    // --- DeviceId serde tests ---
+
+    #[test]
+    fn device_id_deserialises_from_json() {
+        let json = r#""046d:085e:serial123""#;
+        let id: DeviceId = serde_json::from_str(json).unwrap();
+        assert_eq!(id.as_str(), "046d:085e:serial123");
+    }
+
+    #[test]
+    fn device_id_round_trips_through_json() {
+        let original = DeviceId::new("test:device:001");
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: DeviceId = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
     }
 
     #[test]

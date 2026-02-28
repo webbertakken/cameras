@@ -42,3 +42,22 @@ export interface ControlDescriptor {
   flags: ControlFlags
   supported: boolean
 }
+
+/** Result of resetting a single control to its hardware default. */
+export interface ResetResult {
+  controlId: string
+  value: number
+}
+
+/** Saved camera settings as stored by the Rust backend. */
+export interface CameraSettings {
+  name: string
+  controls: Record<string, number>
+}
+
+/** Payload emitted by the `settings-restored` Tauri event. */
+export interface SettingsRestoredPayload {
+  deviceId: string
+  cameraName: string
+  controlsApplied: number
+}

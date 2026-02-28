@@ -1,13 +1,15 @@
+import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
-import type { HotplugEvent } from '../../types/camera'
+import type { HotplugEvent, SettingsRestoredPayload } from '../../types/camera'
 import { useToastStore } from '../notifications/useToast'
 import { onCameraHotplug } from './api'
 import { useCameraStore } from './store'
 
-/** Subscribes to camera hot-plug events and updates the store. */
+/** Subscribes to camera hot-plug events and settings-restored events. */
 export function useHotplug() {
   useEffect(() => {
-    let unlisten: (() => void) | undefined
+    let unlistenHotplug: (() => void) | undefined
+    let unlistenSettings: (() => void) | undefined
 
     onCameraHotplug((event: HotplugEvent) => {
       if (event.type === 'connected') {
@@ -28,11 +30,22 @@ export function useHotplug() {
           .addToast(name ? `${name} disconnected` : 'Camera disconnected', 'info')
       }
     }).then((fn) => {
-      unlisten = fn
+      unlistenHotplug = fn
+    })
+
+    listen<SettingsRestoredPayload>('settings-restored', (event) => {
+      if (event.payload.controlsApplied > 0) {
+        useToastStore
+          .getState()
+          .addToast(`Settings restored for ${event.payload.cameraName}`, 'success')
+      }
+    }).then((fn) => {
+      unlistenSettings = fn
     })
 
     return () => {
-      unlisten?.()
+      unlistenHotplug?.()
+      unlistenSettings?.()
     }
   }, [])
 }

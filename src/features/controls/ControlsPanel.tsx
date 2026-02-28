@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useReducer } from 'react'
-import type { ControlDescriptor, ControlGroup } from '../../types/camera'
+import type { ControlDescriptor, ControlGroup, ResetResult } from '../../types/camera'
 import { AccordionSection } from './AccordionSection'
 import { ControlRenderer } from './ControlRenderer'
 import './ControlsPanel.css'
+import { ResetAllButton } from './ResetAllButton'
 import { getCameraControls, resetCameraControl, setCameraControl } from './api'
 
 /** Display labels for control groups. */
@@ -39,6 +40,7 @@ type PanelAction =
   | { type: 'set_value'; controlId: string; value: number }
   | { type: 'set_error'; controlId: string; value: number; error: string }
   | { type: 'reset_value'; controlId: string; value: number }
+  | { type: 'reset_all'; results: ResetResult[] }
 
 const initialState: PanelState = { descriptors: [], values: {}, loading: false }
 
@@ -73,6 +75,13 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
         ...state,
         values: { ...state.values, [action.controlId]: { value: action.value } },
       }
+    case 'reset_all': {
+      const values: Record<string, ControlValue> = { ...state.values }
+      for (const r of action.results) {
+        values[r.controlId] = { value: r.value }
+      }
+      return { ...state, values }
+    }
   }
 }
 
@@ -103,13 +112,13 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
 
   const handleChange = useCallback(
     (controlId: string, newValue: number) => {
-      if (!cameraId) return
+      if (!cameraId || !cameraName) return
 
       const previousValue = values[controlId]?.value
 
       dispatch({ type: 'set_value', controlId, value: newValue })
 
-      setCameraControl(cameraId, controlId, newValue).catch((err: unknown) => {
+      setCameraControl(cameraId, controlId, newValue, cameraName).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Control rejected by hardware'
         dispatch({
           type: 'set_error',
@@ -119,8 +128,12 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
         })
       })
     },
-    [cameraId, values],
+    [cameraId, cameraName, values],
   )
+
+  const handleResetAll = useCallback((results: ResetResult[]) => {
+    dispatch({ type: 'reset_all', results })
+  }, [])
 
   const handleReset = useCallback(
     (controlId: string) => {
@@ -212,6 +225,7 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
           </AccordionSection>
         )
       })}
+      <ResetAllButton cameraId={cameraId} cameraName={cameraName} onReset={handleResetAll} />
     </section>
   )
 }

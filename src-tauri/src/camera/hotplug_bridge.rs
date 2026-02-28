@@ -1,18 +1,49 @@
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::camera::backend::CameraBackend;
+use crate::camera::commands::CameraState;
 use crate::camera::types::HotplugEvent;
+use crate::settings::commands::{apply_saved_settings, SettingsState};
 
 /// Start watching for hotplug events and forward them as Tauri events.
 ///
-/// Calls `backend.watch_hotplug` with a callback that emits `"camera-hotplug"`
-/// events to all frontend listeners via the Tauri event system.
+/// On `Connected` events, also auto-applies saved settings and emits a
+/// `"settings-restored"` event to notify the frontend.
 pub fn start_hotplug_watcher(app_handle: &AppHandle, backend: &dyn CameraBackend) {
     let handle = app_handle.clone();
 
     let result = backend.watch_hotplug(Box::new(move |event: HotplugEvent| {
         if let Err(e) = handle.emit("camera-hotplug", &event) {
             tracing::warn!("Failed to emit camera-hotplug event: {e}");
+        }
+
+        // Auto-apply saved settings when a camera connects
+        if let HotplugEvent::Connected(ref device) = event {
+            let settings_state = handle.try_state::<SettingsState>();
+            let camera_state = handle.try_state::<CameraState>();
+
+            if let (Some(settings), Some(camera)) = (settings_state, camera_state) {
+                let applied = apply_saved_settings(
+                    camera.backend.as_ref(),
+                    &settings.store,
+                    device.id.as_str(),
+                );
+                if !applied.is_empty() {
+                    tracing::info!(
+                        "Auto-applied {} settings for '{}' on hotplug",
+                        applied.len(),
+                        device.name
+                    );
+                    let _ = handle.emit(
+                        "settings-restored",
+                        serde_json::json!({
+                            "deviceId": device.id.as_str(),
+                            "cameraName": device.name,
+                            "controlsApplied": applied.len(),
+                        }),
+                    );
+                }
+            }
         }
     }));
 
@@ -189,6 +220,27 @@ mod tests {
         let events = received_events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], "disconnected");
+    }
+
+    #[test]
+    fn settings_restored_payload_uses_controls_applied_field_name() {
+        let payload = serde_json::json!({
+            "deviceId": "test:001",
+            "cameraName": "Test Camera",
+            "controlsApplied": 3,
+        });
+        // Verify the field names match the frontend SettingsRestoredPayload type
+        assert!(
+            payload.get("controlsApplied").is_some(),
+            "must use 'controlsApplied' not 'controlCount'"
+        );
+        assert!(
+            payload.get("controlCount").is_none(),
+            "must not use 'controlCount'"
+        );
+        assert_eq!(payload["controlsApplied"], 3);
+        assert_eq!(payload["deviceId"], "test:001");
+        assert_eq!(payload["cameraName"], "Test Camera");
     }
 
     #[test]

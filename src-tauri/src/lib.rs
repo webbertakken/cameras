@@ -8,7 +8,10 @@ mod pipeline;
 mod preset;
 #[allow(dead_code)]
 mod preview;
+mod settings;
 mod tray;
+
+use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -20,9 +23,19 @@ use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{
     get_diagnostics, get_frame, get_thumbnail, start_preview, stop_preview, PreviewState,
 };
+use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
+use settings::store::SettingsStore;
 
 /// Create the camera backend for the current platform.
+///
+/// When `DUMMY_CAMERA=1` is set, a simulated camera is used instead.
 fn create_camera_state() -> CameraState {
+    if camera::dummy::DummyBackend::is_enabled() {
+        return CameraState {
+            backend: Box::new(camera::dummy::DummyBackend::new()),
+        };
+    }
+
     #[cfg(target_os = "windows")]
     {
         use camera::platform::WindowsBackend;
@@ -110,6 +123,8 @@ pub fn run() {
             get_frame,
             get_thumbnail,
             get_diagnostics,
+            reset_to_defaults,
+            get_saved_settings,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -127,9 +142,35 @@ pub fn run() {
                 )?;
             }
 
+            // Initialise settings persistence
+            let settings_path = app
+                .path()
+                .app_data_dir()
+                .expect("app data dir should be available")
+                .join("cameras.json");
+            let store = Arc::new(SettingsStore::new(settings_path));
+            store.start_debounce_task();
+            app.manage(SettingsState {
+                store: Arc::clone(&store),
+            });
+
+            // Auto-apply saved settings to connected cameras
+            let camera_state = app.state::<CameraState>();
+            if let Ok(devices) = camera_state.backend.enumerate_devices() {
+                for device in &devices {
+                    let applied = settings::commands::apply_saved_settings(
+                        camera_state.backend.as_ref(),
+                        &store,
+                        device.id.as_str(),
+                    );
+                    if !applied.is_empty() {
+                        tracing::info!("Restored {} settings for '{}'", applied.len(), device.name);
+                    }
+                }
+            }
+
             tray::setup_tray(app.handle())?;
 
-            let camera_state = app.state::<CameraState>();
             start_hotplug_watcher(app.handle(), camera_state.backend.as_ref());
 
             Ok(())

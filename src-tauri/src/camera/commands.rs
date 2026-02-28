@@ -4,6 +4,7 @@ use crate::camera::backend::CameraBackend;
 use crate::camera::types::{
     CameraDevice, ControlDescriptor, ControlId, ControlValue, DeviceId, FormatDescriptor,
 };
+use crate::settings::commands::SettingsState;
 
 /// Shared camera state managed by Tauri.
 pub struct CameraState {
@@ -42,15 +43,17 @@ pub async fn get_camera_formats(
     state.backend.get_formats(&id).map_err(|e| e.to_string())
 }
 
-/// Set a camera control value.
+/// Set a camera control value and persist the change.
 #[tauri::command]
 pub async fn set_camera_control(
     state: State<'_, CameraState>,
+    settings_state: State<'_, SettingsState>,
     device_id: String,
     control_id: String,
     value: i32,
+    camera_name: String,
 ) -> Result<(), String> {
-    let id = DeviceId::new(device_id);
+    let id = DeviceId::new(&device_id);
     let control = parse_control_id(&control_id)?;
 
     // Look up the descriptor to know the valid range
@@ -73,7 +76,13 @@ pub async fn set_camera_control(
     state
         .backend
         .set_control(&id, &control, clamped)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    settings_state
+        .store
+        .set_control(&device_id, &camera_name, &control_id, clamped.value());
+
+    Ok(())
 }
 
 /// Reset a camera control to its default value.
