@@ -49,6 +49,22 @@ fn create_camera_state() -> CameraState {
         backends.push(Box::new(NullBackend));
     }
 
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    {
+        use camera::canon::backend::CanonBackend;
+        use camera::canon::sdk::EdsSdk;
+
+        match EdsSdk::new() {
+            Ok(sdk) => {
+                backends.push(Box::new(CanonBackend::new(std::sync::Arc::new(sdk))));
+                tracing::info!("Canon EDSDK backend initialised");
+            }
+            Err(e) => {
+                tracing::warn!("Canon EDSDK initialisation failed: {e}");
+            }
+        }
+    }
+
     if camera::dummy::DummyBackend::is_enabled() {
         backends.push(Box::new(camera::dummy::DummyBackend::new()));
     }

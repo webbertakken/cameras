@@ -8,11 +8,11 @@ pub mod api;
 pub mod backend;
 pub mod controls;
 pub mod discovery;
-#[cfg(feature = "canon")]
+#[cfg(all(feature = "canon", target_os = "windows"))]
 pub mod ffi;
 pub mod hotplug;
 pub mod live_view;
 pub mod mock;
-#[cfg(feature = "canon")]
+#[cfg(all(feature = "canon", target_os = "windows"))]
 pub mod sdk;
 pub mod types;
