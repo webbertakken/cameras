@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ControlDescriptor } from '../../types/camera'
+import { useToastStore } from '../notifications/useToast'
 import { ControlsPanel } from './ControlsPanel'
 
 vi.mock('./api', () => ({
@@ -245,5 +246,21 @@ describe('ControlsPanel', () => {
     mockGetControls.mockReturnValue(new Promise(() => {}))
     render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
     expect(screen.queryByRole('button', { name: /reset all to defaults/i })).not.toBeInTheDocument()
+  })
+
+  // --- Error handling ---
+
+  it('shows toast when getCameraControls fails', async () => {
+    const addToastSpy = vi.spyOn(useToastStore.getState(), 'addToast')
+    mockGetControls.mockRejectedValue(new Error('device not found: cam-1'))
+    render(<ControlsPanel cameraId="cam-1" cameraName="Test Cam" />)
+
+    await waitFor(() => {
+      expect(addToastSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to load controls'),
+        'error',
+      )
+    })
+    addToastSpy.mockRestore()
   })
 })

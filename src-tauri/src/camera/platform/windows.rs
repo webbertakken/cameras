@@ -418,11 +418,21 @@ unsafe fn find_device_filter(
                 None::<&windows::Win32::System::Com::IBindCtx>,
                 None::<&IMoniker>,
             )
-            .map_err(|e| CameraError::Enumeration(format!("BindToObject failed: {e}")))?;
+            .map_err(|e| {
+                error!(
+                    "BindToObject failed for device path={device_path}, \
+                     name={friendly_name}: {e}"
+                );
+                CameraError::Enumeration(format!("BindToObject failed: {e}"))
+            })?;
 
         return Ok(filter);
     }
 
+    warn!(
+        "find_device_filter: no matching device found \
+         (path={device_path}, name={friendly_name})"
+    );
     Err(CameraError::DeviceNotFound(format!(
         "path={device_path}, name={friendly_name}"
     )))
@@ -494,7 +504,9 @@ unsafe fn query_device_controls_with_filter(
     let mut controls = Vec::new();
 
     // Query IAMCameraControl (properties 0-6)
-    if let Ok(cam_ctrl) = filter.cast::<IAMCameraControl>() {
+    if let Ok(cam_ctrl) = filter.cast::<IAMCameraControl>().inspect_err(|e| {
+        debug!("IAMCameraControl not supported on this device: {e}");
+    }) {
         for (index, &control_id) in CAMERA_CONTROL_IDS.iter().enumerate() {
             let prop_index = index as i32;
             let mut min = 0i32;
@@ -533,7 +545,9 @@ unsafe fn query_device_controls_with_filter(
     }
 
     // Query IAMVideoProcAmp (properties 0-9)
-    if let Ok(video_proc) = filter.cast::<IAMVideoProcAmp>() {
+    if let Ok(video_proc) = filter.cast::<IAMVideoProcAmp>().inspect_err(|e| {
+        debug!("IAMVideoProcAmp not supported on this device: {e}");
+    }) {
         for (index, &control_id) in PROCAMP_CONTROL_IDS.iter().enumerate() {
             let prop_index = index as i32;
             let mut min = 0i32;
