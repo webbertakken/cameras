@@ -27,6 +27,9 @@ Thumbs.db
 .claude/
 PROMPT.md
 
+# Chainlink
+.chainlink/
+
 # Vitest
 .vitest-attachments/
 
