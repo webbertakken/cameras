@@ -1,2 +1,3 @@
+#!/bin/sh
 yarn lint-staged
 cd src-tauri && cargo clippy -- -D warnings && cargo test --lib
