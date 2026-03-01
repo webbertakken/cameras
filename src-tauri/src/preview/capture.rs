@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::warn;
+#[cfg(target_os = "windows")]
+use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 
