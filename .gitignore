@@ -23,6 +23,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Claude Code
+.claude/
+PROMPT.md
+
 # Vitest
 .vitest-attachments/
 
