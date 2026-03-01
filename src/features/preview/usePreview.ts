@@ -11,6 +11,9 @@ interface UsePreviewResult {
   stop: () => Promise<void>
 }
 
+/** Maximum consecutive get_frame failures before giving up (~1s at 30fps). */
+const MAX_CONSECUTIVE_FAILURES = 30
+
 /** Hook managing the preview lifecycle for a single camera. */
 export function usePreview(deviceId: string | null): UsePreviewResult {
   const [frameSrc, setFrameSrc] = useState<string | null>(null)
@@ -19,6 +22,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
   const runningRef = useRef(false)
   const rafIdRef = useRef<number | null>(null)
   const prevBlobUrlRef = useRef<string | null>(null)
+  const failureCountRef = useRef(0)
 
   const cancelLoop = useCallback(() => {
     runningRef.current = false
@@ -68,11 +72,13 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
 
       setIsActive(true)
       runningRef.current = true
+      failureCountRef.current = 0
 
       const fetchFrame = async () => {
         if (!runningRef.current) return
         try {
           const base64 = await invoke<string>('get_frame', { deviceId })
+          failureCountRef.current = 0
           const raw = atob(base64)
           const bytes = new Uint8Array(raw.length)
           for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
@@ -84,7 +90,15 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
           prevBlobUrlRef.current = url
           setFrameSrc(url)
         } catch {
-          // Frame not yet available — skip
+          failureCountRef.current++
+          if (failureCountRef.current >= MAX_CONSECUTIVE_FAILURES) {
+            const msg = 'Preview stopped — camera is not producing frames'
+            setError(msg)
+            setIsActive(false)
+            runningRef.current = false
+            useToastStore.getState().addToast(msg, 'error')
+            return
+          }
         }
         if (runningRef.current) {
           rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
