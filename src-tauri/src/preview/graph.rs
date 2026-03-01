@@ -13,7 +13,7 @@ pub mod directshow {
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
         IAMStreamConfig, IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl,
-        IPin,
+        IMediaFilter, IPin,
     };
     use windows::Win32::Media::MediaFoundation::VIDEOINFOHEADER;
     use windows::Win32::Media::MediaFoundation::{
@@ -1062,6 +1062,20 @@ pub mod directshow {
                 error!("failed to get IMediaControl: {e}");
                 format!("failed to get IMediaControl: {e}")
             })?;
+
+            // OBS Virtual Camera doesn't handle reference clock timing correctly
+            // (OBS issue #4929, #8057). Remove the clock so the NullRenderer
+            // delivers every sample immediately instead of scheduling by timestamp.
+            if is_obs_virtual_camera(friendly_name) {
+                let media_filter: IMediaFilter = graph.cast().map_err(|e| {
+                    error!("failed to get IMediaFilter: {e}");
+                    format!("failed to get IMediaFilter: {e}")
+                })?;
+                media_filter
+                    .SetSyncSource(None)
+                    .map_err(|e| format!("SetSyncSource(NULL) failed: {e}"))?;
+                info!("disabled reference clock for OBS Virtual Camera");
+            }
 
             media_control.Run().map_err(|e| {
                 error!("failed to run graph: {e}");
