@@ -361,6 +361,16 @@ pub mod directshow {
         });
         data.stats.lock().record_frame(frame_bytes, timestamp_us);
 
+        // Log early frames at debug level to confirm delivery
+        let snapshot = data.stats.lock().snapshot();
+        if snapshot.frame_count <= 3 {
+            debug!(
+                "frame #{} delivered: {width}x{height}, {frame_bytes} bytes, \
+                 sub_type={:?}",
+                snapshot.frame_count, data.sub_type
+            );
+        }
+
         HRESULT(0)
     }
 
@@ -568,6 +578,124 @@ pub mod directshow {
         warn!("no output pin with IAMStreamConfig found, using camera default resolution");
     }
 
+    /// Force NV12 on the source pin via IAMStreamConfig.
+    ///
+    /// Enumerates stream capabilities to find an NV12 format and calls
+    /// SetFormat with the full media type (including proper format_type,
+    /// width, height). This is how OpenCV handles OBS Virtual Camera —
+    /// forcing the entire pipeline to NV12 from the source rather than
+    /// relying on SampleGrabber hints.
+    unsafe fn force_nv12_on_source_pin(source: &IBaseFilter) -> Result<(), String> {
+        use windows::Win32::Media::MediaFoundation::FORMAT_VideoInfo;
+
+        let pin_enum = source
+            .EnumPins()
+            .map_err(|e| format!("EnumPins failed: {e}"))?;
+
+        let mut pin_array = [None; 1];
+
+        loop {
+            let hr = pin_enum.Next(&mut pin_array, None);
+            if hr.is_err() {
+                break;
+            }
+
+            let Some(pin) = pin_array[0].take() else {
+                break;
+            };
+
+            let dir = match pin.QueryDirection() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // PINDIR_OUTPUT = 1
+            if dir.0 != 1 {
+                continue;
+            }
+
+            let Ok(stream_config) = pin.cast::<IAMStreamConfig>() else {
+                continue;
+            };
+
+            let mut count = 0i32;
+            let mut size = 0i32;
+            if stream_config
+                .GetNumberOfCapabilities(&mut count, &mut size)
+                .is_err()
+            {
+                continue;
+            }
+
+            // Find an NV12 capability
+            for i in 0..count {
+                let mut scc = vec![0u8; size as usize];
+                let mut mt_ptr = std::ptr::null_mut();
+                if stream_config
+                    .GetStreamCaps(i, &mut mt_ptr, scc.as_mut_ptr())
+                    .is_err()
+                {
+                    continue;
+                }
+
+                if mt_ptr.is_null() {
+                    continue;
+                }
+
+                let mt_ref = &*mt_ptr;
+
+                let is_nv12 =
+                    mt_ref.subtype == MEDIASUBTYPE_NV12 && mt_ref.formattype == FORMAT_VideoInfo;
+
+                if is_nv12 {
+                    // Extract dimensions for logging
+                    let mut w = 0u32;
+                    let mut h = 0u32;
+                    if !mt_ref.pbFormat.is_null()
+                        && mt_ref.cbFormat as usize >= std::mem::size_of::<VIDEOINFOHEADER>()
+                    {
+                        let vih: &VIDEOINFOHEADER = &*(mt_ref.pbFormat as *const VIDEOINFOHEADER);
+                        w = vih.bmiHeader.biWidth as u32;
+                        h = vih.bmiHeader.biHeight.unsigned_abs();
+                    }
+
+                    match stream_config.SetFormat(mt_ptr) {
+                        Ok(()) => {
+                            info!("set source pin to NV12 successfully ({w}x{h})");
+
+                            // Free the AM_MEDIA_TYPE
+                            if !mt_ref.pbFormat.is_null() {
+                                windows::Win32::System::Com::CoTaskMemFree(Some(
+                                    mt_ref.pbFormat.cast(),
+                                ));
+                            }
+                            windows::Win32::System::Com::CoTaskMemFree(Some(
+                                (mt_ptr as *mut core::ffi::c_void).cast(),
+                            ));
+
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!("SetFormat(NV12, cap {i}) failed: {e}, trying next capability");
+                        }
+                    }
+                }
+
+                // Free the AM_MEDIA_TYPE
+                if !mt_ref.pbFormat.is_null() {
+                    windows::Win32::System::Com::CoTaskMemFree(Some(mt_ref.pbFormat.cast()));
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(
+                    (mt_ptr as *mut core::ffi::c_void).cast(),
+                ));
+            }
+
+            return Err("no NV12 capability found on source pin".to_string());
+        }
+
+        Err("no output pin with IAMStreamConfig found".to_string())
+    }
+
     /// Find a DirectShow source filter by device path, falling back to
     /// friendly name for virtual cameras that lack a DevicePath property.
     unsafe fn find_source_filter(
@@ -715,7 +843,11 @@ pub mod directshow {
             // 2b. Configure the source output pin resolution via IAMStreamConfig.
             //     This requests the camera to output at the desired resolution
             //     rather than defaulting to its maximum (e.g. 1920x1080).
-            if width > 0 && height > 0 {
+            //     Skip for OBS Virtual Camera — its SetFormat returns S_OK for
+            //     anything but silently breaks the pipeline. NV12 is forced
+            //     separately in step 6.
+            info!("checking camera: friendly_name={friendly_name:?}");
+            if width > 0 && height > 0 && !is_obs_virtual_camera(friendly_name) {
                 configure_source_resolution(&source, width, height);
             }
 
@@ -778,12 +910,28 @@ pub mod directshow {
             let grabber_in = find_unconnected_pin(&grabber_filter, 0)?;
 
             if is_obs_virtual_camera(friendly_name) {
-                info!("OBS Virtual Camera detected — requesting NV12 directly");
+                info!(
+                    "OBS Virtual Camera detected — skipping RGB24 SetFormat, \
+                     forcing NV12 on source pin"
+                );
 
+                // Force NV12 on the source pin via IAMStreamConfig so the
+                // entire pipeline negotiates NV12 from the start. This is
+                // how OpenCV handles OBS — setting the grabber alone is
+                // just a hint that DirectShow may ignore.
+                if let Err(e) = force_nv12_on_source_pin(&source) {
+                    warn!(
+                        "could not force NV12 on source pin: {e}, attempting graph-level connect"
+                    );
+                }
+
+                // Set the SampleGrabber to accept NV12 with a proper
+                // FORMAT_VideoInfo so DirectShow treats it as a real
+                // constraint rather than a wildcard hint.
                 let nv12_mt = AmMediaType {
                     major_type: MEDIATYPE_VIDEO,
                     sub_type: MEDIASUBTYPE_NV12,
-                    format_type: GUID::zeroed(),
+                    format_type: FORMAT_VIDEOINFO,
                     ..AmMediaType::default()
                 };
 
