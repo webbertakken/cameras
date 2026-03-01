@@ -2,3 +2,6 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Proprietary SDK DLLs (Canon EDSDK, etc.)
+/lib/

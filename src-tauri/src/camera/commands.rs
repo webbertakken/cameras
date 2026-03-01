@@ -221,6 +221,7 @@ mod tests {
                     is_auto_enabled: false,
                     is_read_only: false,
                 },
+                options: None,
                 supported: true,
             }],
             formats: vec![FormatDescriptor {

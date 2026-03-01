@@ -28,27 +28,33 @@ use settings::store::SettingsStore;
 
 /// Create the camera backend for the current platform.
 ///
-/// When `DUMMY_CAMERA=1` is set, a simulated camera is used instead.
+/// Builds a `CompositeBackend` that merges device lists from all
+/// available backends:
+/// - `WindowsBackend` (DirectShow) on Windows
+/// - `CanonBackend` when the `canon` feature is enabled
+/// - `DummyBackend` when `DUMMY_CAMERA=1` is set
 fn create_camera_state() -> CameraState {
-    if camera::dummy::DummyBackend::is_enabled() {
-        return CameraState {
-            backend: Box::new(camera::dummy::DummyBackend::new()),
-        };
-    }
+    use camera::composite::CompositeBackend;
+
+    let mut backends: Vec<Box<dyn camera::backend::CameraBackend>> = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
         use camera::platform::WindowsBackend;
-        CameraState {
-            backend: Box::new(WindowsBackend::new()),
-        }
+        backends.push(Box::new(WindowsBackend::new()));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        CameraState {
-            backend: Box::new(NullBackend),
-        }
+        backends.push(Box::new(NullBackend));
+    }
+
+    if camera::dummy::DummyBackend::is_enabled() {
+        backends.push(Box::new(camera::dummy::DummyBackend::new()));
+    }
+
+    CameraState {
+        backend: Box::new(CompositeBackend::new(backends)),
     }
 }
 

@@ -122,6 +122,11 @@ pub enum ControlId {
     WhiteBalance,
     BacklightCompensation,
     Gain,
+    // Canon EDSDK properties
+    Iso,
+    Aperture,
+    ShutterSpeed,
+    ExposureCompensation,
 }
 
 impl ControlId {
@@ -145,6 +150,10 @@ impl ControlId {
             Self::WhiteBalance => "White Balance",
             Self::BacklightCompensation => "Backlight Compensation",
             Self::Gain => "Gain",
+            Self::Iso => "ISO",
+            Self::Aperture => "Aperture",
+            Self::ShutterSpeed => "Shutter Speed",
+            Self::ExposureCompensation => "Exposure Compensation",
         }
     }
 
@@ -168,6 +177,10 @@ impl ControlId {
             Self::WhiteBalance => "white_balance",
             Self::BacklightCompensation => "backlight_compensation",
             Self::Gain => "gain",
+            Self::Iso => "canon_iso",
+            Self::Aperture => "canon_aperture",
+            Self::ShutterSpeed => "canon_shutter_speed",
+            Self::ExposureCompensation => "canon_exposure_compensation",
         }
     }
 
@@ -184,6 +197,9 @@ impl ControlId {
             Self::Exposure | Self::WhiteBalance | Self::BacklightCompensation => "exposure",
             Self::Focus | Self::Zoom | Self::Iris => "focus",
             Self::Pan | Self::Tilt | Self::Roll | Self::ColorEnable => "advanced",
+            Self::Iso | Self::Aperture | Self::ShutterSpeed | Self::ExposureCompensation => {
+                "camera"
+            }
         }
     }
 }
@@ -211,6 +227,10 @@ impl ControlId {
             "white_balance" => Some(Self::WhiteBalance),
             "backlight_compensation" => Some(Self::BacklightCompensation),
             "gain" => Some(Self::Gain),
+            "canon_iso" => Some(Self::Iso),
+            "canon_aperture" => Some(Self::Aperture),
+            "canon_shutter_speed" => Some(Self::ShutterSpeed),
+            "canon_exposure_compensation" => Some(Self::ExposureCompensation),
             _ => None,
         }
     }
@@ -234,6 +254,14 @@ pub struct ControlFlags {
     pub is_read_only: bool,
 }
 
+/// A selectable option for a `ControlType::Select` control.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlOption {
+    pub value: i32,
+    pub label: String,
+}
+
 /// Full metadata for a single camera control (matches frontend ControlDescriptor).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -248,6 +276,9 @@ pub struct ControlDescriptor {
     pub default: Option<i32>,
     pub current: i32,
     pub flags: ControlFlags,
+    /// Available options for `ControlType::Select` controls (e.g. ISO values).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<ControlOption>>,
     pub supported: bool,
 }
 
@@ -433,6 +464,7 @@ mod tests {
                 is_auto_enabled: false,
                 is_read_only: false,
             },
+            options: None,
             supported: true,
         };
 
@@ -449,6 +481,8 @@ mod tests {
         assert_eq!(json["flags"]["isAutoEnabled"], false);
         assert_eq!(json["flags"]["isReadOnly"], false);
         assert_eq!(json["supported"], true);
+        // options should be absent (not null) when None
+        assert!(json.get("options").is_none());
     }
 
     // --- ControlValue tests ---
@@ -574,6 +608,10 @@ mod tests {
         assert_eq!(ControlId::Exposure.group(), "exposure");
         assert_eq!(ControlId::Focus.group(), "focus");
         assert_eq!(ControlId::Pan.group(), "advanced");
+        assert_eq!(ControlId::Iso.group(), "camera");
+        assert_eq!(ControlId::Aperture.group(), "camera");
+        assert_eq!(ControlId::ShutterSpeed.group(), "camera");
+        assert_eq!(ControlId::ExposureCompensation.group(), "camera");
     }
 
     #[test]
@@ -582,6 +620,79 @@ mod tests {
         assert_eq!(
             ControlId::BacklightCompensation.display_name(),
             "Backlight Compensation"
+        );
+        assert_eq!(ControlId::Iso.display_name(), "ISO");
+        assert_eq!(ControlId::Aperture.display_name(), "Aperture");
+        assert_eq!(ControlId::ShutterSpeed.display_name(), "Shutter Speed");
+        assert_eq!(
+            ControlId::ExposureCompensation.display_name(),
+            "Exposure Compensation"
+        );
+    }
+
+    #[test]
+    fn control_option_serialises_to_json() {
+        let option = ControlOption {
+            value: 0x48,
+            label: "100".to_string(),
+        };
+        let json = serde_json::to_value(&option).unwrap();
+        assert_eq!(json["value"], 0x48);
+        assert_eq!(json["label"], "100");
+    }
+
+    #[test]
+    fn control_descriptor_with_options_serialises_correctly() {
+        let desc = ControlDescriptor {
+            id: "canon_iso".to_string(),
+            name: "ISO".to_string(),
+            control_type: ControlType::Select,
+            group: "camera".to_string(),
+            min: None,
+            max: None,
+            step: None,
+            default: None,
+            current: 0x48,
+            flags: ControlFlags {
+                supports_auto: false,
+                is_auto_enabled: false,
+                is_read_only: false,
+            },
+            options: Some(vec![
+                ControlOption {
+                    value: 0x48,
+                    label: "100".to_string(),
+                },
+                ControlOption {
+                    value: 0x50,
+                    label: "200".to_string(),
+                },
+            ]),
+            supported: true,
+        };
+
+        let json = serde_json::to_value(&desc).unwrap();
+        assert_eq!(json["controlType"], "select");
+        let options = json["options"].as_array().unwrap();
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0]["value"], 0x48);
+        assert_eq!(options[0]["label"], "100");
+    }
+
+    #[test]
+    fn from_str_id_parses_canon_controls() {
+        assert_eq!(ControlId::from_str_id("canon_iso"), Some(ControlId::Iso));
+        assert_eq!(
+            ControlId::from_str_id("canon_aperture"),
+            Some(ControlId::Aperture)
+        );
+        assert_eq!(
+            ControlId::from_str_id("canon_shutter_speed"),
+            Some(ControlId::ShutterSpeed)
+        );
+        assert_eq!(
+            ControlId::from_str_id("canon_exposure_compensation"),
+            Some(ControlId::ExposureCompensation)
         );
     }
 
@@ -680,6 +791,10 @@ mod tests {
             ControlId::WhiteBalance,
             ControlId::BacklightCompensation,
             ControlId::Gain,
+            ControlId::Iso,
+            ControlId::Aperture,
+            ControlId::ShutterSpeed,
+            ControlId::ExposureCompensation,
         ];
         for control in all_controls {
             let str_id = control.as_id_str();
