@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, State};
 use super::capture::{CaptureSession, PreviewErrorPayload};
 use super::compress;
 use crate::camera::commands::CameraState;
+use crate::camera::error::humanise_error;
 use crate::camera::types::DeviceId;
 use crate::diagnostics::stats::DiagnosticSnapshot;
 
@@ -46,7 +47,7 @@ fn resolve_device_info(
     let devices = camera_state
         .backend
         .enumerate_devices()
-        .map_err(|e| format!("failed to enumerate devices: {e}"))?;
+        .map_err(|e| humanise_error(&format!("failed to enumerate devices: {e}")))?;
 
     let target_id = DeviceId::new(device_id);
     devices
@@ -88,7 +89,7 @@ pub async fn start_preview(
                 "preview-error",
                 PreviewErrorPayload {
                     device_id: device_id.to_string(),
-                    error: error.to_string(),
+                    error: humanise_error(error),
                 },
             );
         }) as super::capture::ErrorCallback

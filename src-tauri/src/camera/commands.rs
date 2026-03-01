@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::camera::backend::CameraBackend;
+use crate::camera::error::humanise_error;
 use crate::camera::types::{
     CameraDevice, ControlDescriptor, ControlId, ControlValue, DeviceId, FormatDescriptor,
 };
@@ -20,7 +21,10 @@ fn parse_control_id(s: &str) -> Result<ControlId, String> {
 /// List all connected cameras.
 #[tauri::command]
 pub async fn list_cameras(state: State<'_, CameraState>) -> Result<Vec<CameraDevice>, String> {
-    state.backend.enumerate_devices().map_err(|e| e.to_string())
+    state
+        .backend
+        .enumerate_devices()
+        .map_err(|e| humanise_error(&e.to_string()))
 }
 
 /// Get all supported controls for a camera.
@@ -30,7 +34,10 @@ pub async fn get_camera_controls(
     device_id: String,
 ) -> Result<Vec<ControlDescriptor>, String> {
     let id = DeviceId::new(device_id);
-    state.backend.get_controls(&id).map_err(|e| e.to_string())
+    state
+        .backend
+        .get_controls(&id)
+        .map_err(|e| humanise_error(&e.to_string()))
 }
 
 /// Get supported video formats for a camera.
@@ -40,7 +47,10 @@ pub async fn get_camera_formats(
     device_id: String,
 ) -> Result<Vec<FormatDescriptor>, String> {
     let id = DeviceId::new(device_id);
-    state.backend.get_formats(&id).map_err(|e| e.to_string())
+    state
+        .backend
+        .get_formats(&id)
+        .map_err(|e| humanise_error(&e.to_string()))
 }
 
 /// Set a camera control value and persist the change.
@@ -57,7 +67,10 @@ pub async fn set_camera_control(
     let control = parse_control_id(&control_id)?;
 
     // Look up the descriptor to know the valid range
-    let descriptors = state.backend.get_controls(&id).map_err(|e| e.to_string())?;
+    let descriptors = state
+        .backend
+        .get_controls(&id)
+        .map_err(|e| humanise_error(&e.to_string()))?;
     let desc = descriptors
         .iter()
         .find(|d| d.id == control_id)
@@ -76,7 +89,7 @@ pub async fn set_camera_control(
     state
         .backend
         .set_control(&id, &control, clamped)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| humanise_error(&e.to_string()))?;
 
     settings_state
         .store
@@ -97,7 +110,10 @@ pub async fn reset_camera_control(
     let id = DeviceId::new(device_id);
     let control = parse_control_id(&control_id)?;
 
-    let descriptors = state.backend.get_controls(&id).map_err(|e| e.to_string())?;
+    let descriptors = state
+        .backend
+        .get_controls(&id)
+        .map_err(|e| humanise_error(&e.to_string()))?;
     let desc = descriptors
         .iter()
         .find(|d| d.id == control_id)
@@ -116,7 +132,7 @@ pub async fn reset_camera_control(
     state
         .backend
         .set_control(&id, &control, clamped)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| humanise_error(&e.to_string()))?;
 
     Ok(default_val)
 }

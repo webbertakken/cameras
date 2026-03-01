@@ -2,6 +2,8 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
+use tracing::warn;
 #[cfg(target_os = "windows")]
 use tracing::{error, info};
 
@@ -84,12 +86,16 @@ impl FrameBuffer {
     }
 }
 
+/// How long to wait for the first frame before firing a timeout error.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Active capture session for a single camera.
 pub struct CaptureSession {
     device_id: String,
     buffer: Arc<FrameBuffer>,
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    watchdog: Option<JoinHandle<()>>,
     stats: Arc<Mutex<DiagnosticStats>>,
 }
 
@@ -123,6 +129,9 @@ impl CaptureSession {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
+
+        // Clone on_error for the watchdog before moving into the capture thread.
+        let on_error_for_watchdog = on_error.clone();
 
         let thread = {
             let device_id_clone = device_id.clone();
@@ -174,13 +183,74 @@ impl CaptureSession {
             }
         };
 
+        // Spawn a watchdog that fires an error if no frame arrives
+        // within STARTUP_TIMEOUT.
+        let watchdog = Self::spawn_watchdog(
+            device_id.clone(),
+            Arc::clone(&buffer),
+            Arc::clone(&running),
+            on_error_for_watchdog,
+        );
+
         Self {
             device_id,
             buffer,
             running,
             thread,
+            watchdog,
             stats,
         }
+    }
+
+    /// Spawn a watchdog thread that waits for `timeout` and checks whether any
+    /// frames have arrived. If not, fires the error callback and stops the
+    /// capture session.
+    fn spawn_watchdog_with_timeout(
+        device_id: String,
+        buffer: Arc<FrameBuffer>,
+        running: Arc<AtomicBool>,
+        on_error: Option<ErrorCallback>,
+        timeout: Duration,
+    ) -> Option<JoinHandle<()>> {
+        Some(
+            std::thread::Builder::new()
+                .name(format!("watchdog-{device_id}"))
+                .spawn(move || {
+                    std::thread::sleep(timeout);
+
+                    // If the session was stopped before the timeout, do nothing.
+                    if !running.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    // If frames have arrived, all is well.
+                    if buffer.sequence() > 0 {
+                        return;
+                    }
+
+                    let msg = "Camera failed to produce frames — \
+                               check if another app is using it";
+                    warn!("{msg} (device: {device_id})");
+
+                    if let Some(cb) = &on_error {
+                        cb(&device_id, msg);
+                    }
+
+                    // Signal the capture thread to stop.
+                    running.store(false, Ordering::Relaxed);
+                })
+                .expect("failed to spawn watchdog thread"),
+        )
+    }
+
+    /// Spawn a watchdog with the default `STARTUP_TIMEOUT`.
+    fn spawn_watchdog(
+        device_id: String,
+        buffer: Arc<FrameBuffer>,
+        running: Arc<AtomicBool>,
+        on_error: Option<ErrorCallback>,
+    ) -> Option<JoinHandle<()>> {
+        Self::spawn_watchdog_with_timeout(device_id, buffer, running, on_error, STARTUP_TIMEOUT)
     }
 
     /// Get a reference to the frame buffer.
@@ -207,6 +277,9 @@ impl CaptureSession {
     pub fn stop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
         if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.watchdog.take() {
             let _ = handle.join();
         }
     }
@@ -339,5 +412,99 @@ mod tests {
         // On non-Windows, no capture thread spawns, so callback won't fire
         // but the session should still be valid
         assert!(!session.is_running());
+    }
+
+    #[test]
+    fn watchdog_fires_error_when_no_frames_arrive() {
+        let error_msg = Arc::new(Mutex::new(String::new()));
+        let error_msg_clone = Arc::clone(&error_msg);
+        let on_error: ErrorCallback = Arc::new(move |_device_id, msg| {
+            *error_msg_clone.lock() = msg.to_string();
+        });
+
+        let buffer = Arc::new(FrameBuffer::new(3));
+        let running = Arc::new(AtomicBool::new(true));
+
+        let handle = CaptureSession::spawn_watchdog_with_timeout(
+            "test-device".to_string(),
+            Arc::clone(&buffer),
+            Arc::clone(&running),
+            Some(on_error),
+            Duration::from_millis(50),
+        )
+        .unwrap();
+
+        handle.join().unwrap();
+
+        let msg = error_msg.lock().clone();
+        assert!(
+            msg.contains("Camera failed to produce frames"),
+            "expected timeout error, got: {msg}"
+        );
+        assert!(
+            !running.load(Ordering::Relaxed),
+            "watchdog should stop the session"
+        );
+    }
+
+    #[test]
+    fn watchdog_does_not_fire_when_frames_arrive() {
+        let error_called = Arc::new(AtomicBool::new(false));
+        let error_called_clone = Arc::clone(&error_called);
+        let on_error: ErrorCallback = Arc::new(move |_device_id, _msg| {
+            error_called_clone.store(true, Ordering::Relaxed);
+        });
+
+        let buffer = Arc::new(FrameBuffer::new(3));
+        buffer.push(make_frame(1, 100)); // Frame already arrived
+        let running = Arc::new(AtomicBool::new(true));
+
+        let handle = CaptureSession::spawn_watchdog_with_timeout(
+            "test-device".to_string(),
+            Arc::clone(&buffer),
+            Arc::clone(&running),
+            Some(on_error),
+            Duration::from_millis(50),
+        )
+        .unwrap();
+
+        handle.join().unwrap();
+
+        assert!(
+            !error_called.load(Ordering::Relaxed),
+            "watchdog should not fire when frames exist"
+        );
+        assert!(
+            running.load(Ordering::Relaxed),
+            "running flag should remain true"
+        );
+    }
+
+    #[test]
+    fn watchdog_does_not_fire_when_session_stopped_early() {
+        let error_called = Arc::new(AtomicBool::new(false));
+        let error_called_clone = Arc::clone(&error_called);
+        let on_error: ErrorCallback = Arc::new(move |_device_id, _msg| {
+            error_called_clone.store(true, Ordering::Relaxed);
+        });
+
+        let buffer = Arc::new(FrameBuffer::new(3));
+        let running = Arc::new(AtomicBool::new(false)); // Already stopped
+
+        let handle = CaptureSession::spawn_watchdog_with_timeout(
+            "test-device".to_string(),
+            Arc::clone(&buffer),
+            Arc::clone(&running),
+            Some(on_error),
+            Duration::from_millis(50),
+        )
+        .unwrap();
+
+        handle.join().unwrap();
+
+        assert!(
+            !error_called.load(Ordering::Relaxed),
+            "watchdog should not fire when session is already stopped"
+        );
     }
 }

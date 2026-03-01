@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer } from 'react'
 import type { ControlDescriptor, ControlGroup, ResetResult } from '../../types/camera'
+import { useToastStore } from '../notifications/useToast'
 import { AccordionSection } from './AccordionSection'
 import { ControlRenderer } from './ControlRenderer'
 import './ControlsPanel.css'
@@ -99,9 +100,11 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
         if (cancelled) return
         dispatch({ type: 'fetch_success', controls })
       },
-      () => {
+      (err: unknown) => {
         if (cancelled) return
         dispatch({ type: 'fetch_error' })
+        const message = err instanceof Error ? err.message : String(err)
+        useToastStore.getState().addToast(`Failed to load controls: ${message}`, 'error')
       },
     )
 
