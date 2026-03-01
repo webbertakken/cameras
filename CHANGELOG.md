@@ -2,49 +2,76 @@
 
 ## [0.6.0](https://github.com/webbertakken/cameras/compare/v0.5.0...v0.6.0) (2026-02-28)
 
+### Fixed
+
+- Fix OBS Virtual Camera preview (0 frames after NV12 connect) (#1)
+- Fix OBS reference clock (1-frame stall) (#16)
+- Fix watchdog timer firing too early (#15)
+- Fix React strict mode double-mount killing preview (#14)
+
+### Changed
+
+- Create DEVELOPMENT.md with dev setup and EDSDK instructions (#56)
+- End-to-end smoke test with MockEdsSdk (#46)
+- CI configuration for Canon feature (#45)
+- CameraError variants for Canon (#44)
+- Wire CompositeBackend into app startup (#41)
+- CompositeBackend implementation (#40)
+- EDSDK event loop (#37)
+- Periodic re-enumeration for new connections (#36)
+- EDSDK state event handler (#35)
+- EDSDK value translation (#34)
+- Canon property read/write (#33)
+- Canon property to ControlDescriptor mapping (#32)
+
+- Merge PR #48 (runtime bug fixes) (#3)
+- Fix: clean up AMBIGUITIES.md (section 10) (#13)
+- Fix: debounce race window (section 9) (#12)
+- Fix: TempDir leak in tests (section 8) (#11)
+- Fix: pass camera name from frontend (section 7) (#10)
+- Tray: update tests (section 6) (#9)
+- Tray: frontend settings page (section 5) (#8)
+- Tray: app settings window (section 4) (#7)
+- Tray: update menu event handlers (section 3) (#6)
+- Tray: fix left-click behaviour (section 2) (#5)
+- Tray: update menu structure (section 1) (#4)
 
 ### Features
 
-* **tray:** replace menu with show/hide, app settings, exit ([#44](https://github.com/webbertakken/cameras/issues/44)) ([05a3a3f](https://github.com/webbertakken/cameras/commit/05a3a3fdce7aabe47dafa3cd469f7d4883650ee8))
-
+- **tray:** replace menu with show/hide, app settings, exit ([#44](https://github.com/webbertakken/cameras/issues/44)) ([05a3a3f](https://github.com/webbertakken/cameras/commit/05a3a3fdce7aabe47dafa3cd469f7d4883650ee8))
 
 ### Bug fixes
 
-* **settings:** close debounce race window and remove AMBIGUITIES.md ([#45](https://github.com/webbertakken/cameras/issues/45)) ([8a1b491](https://github.com/webbertakken/cameras/commit/8a1b4915615d9809c53c95892126c1f8028fd7fc))
+- **settings:** close debounce race window and remove AMBIGUITIES.md ([#45](https://github.com/webbertakken/cameras/issues/45)) ([8a1b491](https://github.com/webbertakken/cameras/commit/8a1b4915615d9809c53c95892126c1f8028fd7fc))
 
 ## [0.5.0](https://github.com/webbertakken/cameras/compare/v0.4.0...v0.5.0) (2026-02-28)
 
-
 ### Features
 
-* **settings:** add settings persistence with auto-save, auto-apply, and reset ([#43](https://github.com/webbertakken/cameras/issues/43)) ([fd63f7c](https://github.com/webbertakken/cameras/commit/fd63f7c10426df86d2eafa2607feac7b69bacdd9))
-
+- **settings:** add settings persistence with auto-save, auto-apply, and reset ([#43](https://github.com/webbertakken/cameras/issues/43)) ([fd63f7c](https://github.com/webbertakken/cameras/commit/fd63f7c10426df86d2eafa2607feac7b69bacdd9))
 
 ### Performance improvements
 
-* **preview:** optimise capture pipeline for real-time preview ([#41](https://github.com/webbertakken/cameras/issues/41)) ([4f32a42](https://github.com/webbertakken/cameras/commit/4f32a420f979ce6e9f5968fdd416cc0ecc0789d2))
+- **preview:** optimise capture pipeline for real-time preview ([#41](https://github.com/webbertakken/cameras/issues/41)) ([4f32a42](https://github.com/webbertakken/cameras/commit/4f32a420f979ce6e9f5968fdd416cc0ecc0789d2))
 
 ## [0.4.0](https://github.com/webbertakken/cameras/compare/v0.3.1...v0.4.0) (2026-02-27)
 
-
 ### Features
 
-* **testing:** add visual regression with baselines ([#32](https://github.com/webbertakken/cameras/issues/32)) ([51ccfea](https://github.com/webbertakken/cameras/commit/51ccfea20fde9e44f5381155b1e8da27ed6b929e))
-
+- **testing:** add visual regression with baselines ([#32](https://github.com/webbertakken/cameras/issues/32)) ([51ccfea](https://github.com/webbertakken/cameras/commit/51ccfea20fde9e44f5381155b1e8da27ed6b929e))
 
 ### Bug fixes
 
-* **ci:** add --repo flag to gh pr view in update-snapshots workflow ([#39](https://github.com/webbertakken/cameras/issues/39)) ([62a0538](https://github.com/webbertakken/cameras/commit/62a0538cf7d7ab8359effe03b6e017730464304a))
-* implement DirectShow capture pipeline and wire preview ([b8d2293](https://github.com/webbertakken/cameras/commit/b8d2293c40d8e578acacbb52d1fb4ea1bf62042b))
-* **logging:** explicit stdout target and debug println for preview ([#36](https://github.com/webbertakken/cameras/issues/36)) ([9d67695](https://github.com/webbertakken/cameras/commit/9d6769593866f31b194daa6e0428a9b1c3010538))
-* **preview:** accept any video format, handle virtual cameras ([#38](https://github.com/webbertakken/cameras/issues/38)) ([6d24637](https://github.com/webbertakken/cameras/commit/6d24637c29178cc4ee44b4f35379fd864d43e433))
-* **preview:** decode base64 frame response from Rust backend ([#40](https://github.com/webbertakken/cameras/issues/40)) ([40ababa](https://github.com/webbertakken/cameras/commit/40abababf935a724ace78a81d06cf10d4e26a1b3))
-* **ui:** resolve tray icon toggle and dark mode flash ([#34](https://github.com/webbertakken/cameras/issues/34)) ([3140683](https://github.com/webbertakken/cameras/commit/314068318513b96ef0993e27a022c83cfc853f0b))
-
+- **ci:** add --repo flag to gh pr view in update-snapshots workflow ([#39](https://github.com/webbertakken/cameras/issues/39)) ([62a0538](https://github.com/webbertakken/cameras/commit/62a0538cf7d7ab8359effe03b6e017730464304a))
+- implement DirectShow capture pipeline and wire preview ([b8d2293](https://github.com/webbertakken/cameras/commit/b8d2293c40d8e578acacbb52d1fb4ea1bf62042b))
+- **logging:** explicit stdout target and debug println for preview ([#36](https://github.com/webbertakken/cameras/issues/36)) ([9d67695](https://github.com/webbertakken/cameras/commit/9d6769593866f31b194daa6e0428a9b1c3010538))
+- **preview:** accept any video format, handle virtual cameras ([#38](https://github.com/webbertakken/cameras/issues/38)) ([6d24637](https://github.com/webbertakken/cameras/commit/6d24637c29178cc4ee44b4f35379fd864d43e433))
+- **preview:** decode base64 frame response from Rust backend ([#40](https://github.com/webbertakken/cameras/issues/40)) ([40ababa](https://github.com/webbertakken/cameras/commit/40abababf935a724ace78a81d06cf10d4e26a1b3))
+- **ui:** resolve tray icon toggle and dark mode flash ([#34](https://github.com/webbertakken/cameras/issues/34)) ([3140683](https://github.com/webbertakken/cameras/commit/314068318513b96ef0993e27a022c83cfc853f0b))
 
 ### Maintenance
 
-* make yarn dev run full Tauri app ([#31](https://github.com/webbertakken/cameras/issues/31)) ([ba5250d](https://github.com/webbertakken/cameras/commit/ba5250d53b4874edcebb3f253a40769b3aa6415c))
+- make yarn dev run full Tauri app ([#31](https://github.com/webbertakken/cameras/issues/31)) ([ba5250d](https://github.com/webbertakken/cameras/commit/ba5250d53b4874edcebb3f253a40769b3aa6415c))
 
 ## [0.3.1](https://github.com/webbertakken/cameras/compare/v0.3.0...v0.3.1) (2026-02-26)
 

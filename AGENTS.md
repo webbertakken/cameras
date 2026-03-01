@@ -8,3 +8,4 @@
   3. Refactor while keeping tests green (refactor)
 - Applies to both Rust (`cargo test`) and frontend (`vitest`)
 - No implementation code without corresponding tests
+- Use `chainlink` cli for tracking issues and tasks (`.chainlink/` is gitignored)

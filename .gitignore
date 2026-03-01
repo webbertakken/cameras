@@ -8,6 +8,9 @@ dist/
 # Rust
 target/
 
+# Proprietary SDK libraries
+src-tauri/lib/
+
 # Editor
 .vscode/
 .idea/
@@ -26,6 +29,9 @@ Thumbs.db
 # Claude Code
 .claude/
 PROMPT.md
+
+# Chainlink
+.chainlink/
 
 # Vitest
 .vitest-attachments/
