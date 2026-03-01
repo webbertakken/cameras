@@ -86,6 +86,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
+      - name: Test (canon feature)
+        working-directory: src-tauri
+        run: cargo test --lib --features canon
+
   visual:
     name: Visual regression
     runs-on: ubuntu-22.04

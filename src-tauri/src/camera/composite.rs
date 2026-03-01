@@ -350,3 +350,226 @@ mod tests {
         assert_send_sync::<CompositeBackend>();
     }
 }
+
+/// End-to-end smoke tests using `CanonBackend<MockEdsSdk>` inside a `CompositeBackend`.
+///
+/// These verify that the Canon backend integrates correctly with the composite
+/// routing: enumeration merges, control routing, and device isolation all work
+/// as expected with a realistic multi-backend setup.
+#[cfg(test)]
+#[cfg(feature = "canon")]
+mod canon_e2e_tests {
+    use super::*;
+    use crate::camera::canon::backend::CanonBackend;
+    use crate::camera::canon::mock::MockEdsSdk;
+    use crate::camera::canon::types::PROP_ID_ISO_SPEED;
+    use crate::camera::error::CameraError;
+    use crate::camera::types::{
+        CameraDevice, ControlDescriptor, ControlFlags, ControlId, ControlType, ControlValue,
+        DeviceId, FormatDescriptor, HotplugEvent,
+    };
+    use std::sync::Arc;
+
+    /// Stub backend representing a DirectShow (or similar) non-Canon camera.
+    struct DirectShowStub {
+        devices: Vec<CameraDevice>,
+    }
+
+    impl DirectShowStub {
+        fn new() -> Self {
+            Self {
+                devices: vec![CameraDevice {
+                    id: DeviceId::new("ds:logitech-brio"),
+                    name: "Logitech BRIO".to_string(),
+                    device_path: "ds://logitech".to_string(),
+                    is_connected: true,
+                }],
+            }
+        }
+    }
+
+    impl CameraBackend for DirectShowStub {
+        fn enumerate_devices(&self) -> Result<Vec<CameraDevice>> {
+            Ok(self.devices.clone())
+        }
+
+        fn watch_hotplug(&self, _cb: Box<dyn Fn(HotplugEvent) + Send>) -> Result<()> {
+            Ok(())
+        }
+
+        fn get_controls(&self, id: &DeviceId) -> Result<Vec<ControlDescriptor>> {
+            if self.devices.iter().any(|d| &d.id == id) {
+                Ok(vec![ControlDescriptor {
+                    id: "brightness".to_string(),
+                    name: "Brightness".to_string(),
+                    control_type: ControlType::Slider,
+                    group: "image".to_string(),
+                    min: Some(0),
+                    max: Some(255),
+                    step: Some(1),
+                    default: Some(128),
+                    current: 128,
+                    flags: ControlFlags {
+                        supports_auto: false,
+                        is_auto_enabled: false,
+                        is_read_only: false,
+                    },
+                    options: None,
+                    supported: true,
+                }])
+            } else {
+                Err(CameraError::DeviceNotFound(id.to_string()))
+            }
+        }
+
+        fn get_control(&self, id: &DeviceId, _control: &ControlId) -> Result<ControlValue> {
+            if self.devices.iter().any(|d| &d.id == id) {
+                Ok(ControlValue::new(128, Some(0), Some(255)))
+            } else {
+                Err(CameraError::DeviceNotFound(id.to_string()))
+            }
+        }
+
+        fn set_control(
+            &self,
+            id: &DeviceId,
+            _control: &ControlId,
+            _value: ControlValue,
+        ) -> Result<()> {
+            if self.devices.iter().any(|d| &d.id == id) {
+                Ok(())
+            } else {
+                Err(CameraError::DeviceNotFound(id.to_string()))
+            }
+        }
+
+        fn get_formats(&self, id: &DeviceId) -> Result<Vec<FormatDescriptor>> {
+            if self.devices.iter().any(|d| &d.id == id) {
+                Ok(vec![FormatDescriptor {
+                    width: 1920,
+                    height: 1080,
+                    fps: 30.0,
+                    pixel_format: "MJPG".to_string(),
+                }])
+            } else {
+                Err(CameraError::DeviceNotFound(id.to_string()))
+            }
+        }
+    }
+
+    /// Build a composite with one Canon camera (MockEdsSdk) and one DirectShow stub.
+    fn make_composite() -> CompositeBackend {
+        let mock = MockEdsSdk::new()
+            .with_camera("Canon EOS R5", Some("SER001"))
+            .with_property(0, PROP_ID_ISO_SPEED, 0x48)
+            .with_property_desc(0, PROP_ID_ISO_SPEED, vec![0x48, 0x50, 0x58]);
+
+        let canon: Box<dyn CameraBackend> = Box::new(CanonBackend::new(Arc::new(mock)));
+        let ds: Box<dyn CameraBackend> = Box::new(DirectShowStub::new());
+
+        CompositeBackend::new(vec![ds, canon])
+    }
+
+    #[test]
+    fn enumerates_devices_from_both_backends() {
+        let composite = make_composite();
+        let devices = composite.enumerate_devices().unwrap();
+
+        assert_eq!(devices.len(), 2, "should see one DS + one Canon device");
+
+        let names: Vec<&str> = devices.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Logitech BRIO"), "missing DS device");
+        assert!(names.contains(&"Canon EOS R5"), "missing Canon device");
+    }
+
+    #[test]
+    fn reads_canon_controls() {
+        let composite = make_composite();
+        composite.enumerate_devices().unwrap();
+
+        let canon_id = DeviceId::new("canon:SER001");
+        let controls = composite.get_controls(&canon_id).unwrap();
+
+        assert!(!controls.is_empty(), "Canon should expose controls");
+
+        let iso = controls.iter().find(|c| c.id == "canon_iso");
+        assert!(iso.is_some(), "should have ISO control");
+
+        let iso = iso.unwrap();
+        assert_eq!(iso.control_type, ControlType::Select);
+        assert!(iso.options.is_some(), "ISO should have selectable options");
+        assert_eq!(iso.options.as_ref().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn sets_and_reads_back_canon_control() {
+        let composite = make_composite();
+        composite.enumerate_devices().unwrap();
+
+        let canon_id = DeviceId::new("canon:SER001");
+
+        // Read initial ISO value
+        let initial = composite.get_control(&canon_id, &ControlId::Iso).unwrap();
+        assert_eq!(initial.value(), 0x48, "initial ISO should be 100 (0x48)");
+
+        // Set ISO to 200 (0x50)
+        let result = composite.set_control(
+            &canon_id,
+            &ControlId::Iso,
+            ControlValue::new(0x50, None, None),
+        );
+        assert!(result.is_ok(), "setting ISO should succeed");
+
+        // Read back the updated value
+        let updated = composite.get_control(&canon_id, &ControlId::Iso).unwrap();
+        assert_eq!(updated.value(), 0x50, "ISO should now be 200 (0x50)");
+    }
+
+    #[test]
+    fn routes_ds_controls_to_ds_backend() {
+        let composite = make_composite();
+        composite.enumerate_devices().unwrap();
+
+        let ds_id = DeviceId::new("ds:logitech-brio");
+        let controls = composite.get_controls(&ds_id).unwrap();
+
+        assert!(!controls.is_empty(), "DS device should have controls");
+        assert_eq!(controls[0].id, "brightness");
+    }
+
+    #[test]
+    fn unknown_device_returns_device_not_found() {
+        let composite = make_composite();
+        composite.enumerate_devices().unwrap();
+
+        let unknown_id = DeviceId::new("nonexistent:device");
+
+        let result = composite.get_controls(&unknown_id);
+        assert!(result.is_err(), "unknown device should fail");
+
+        match result.unwrap_err() {
+            CameraError::DeviceNotFound(_) => {} // expected
+            other => panic!("expected DeviceNotFound, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn canon_controls_do_not_leak_to_ds_device() {
+        let composite = make_composite();
+        composite.enumerate_devices().unwrap();
+
+        let ds_id = DeviceId::new("ds:logitech-brio");
+
+        // Attempting to read a Canon-specific control on the DS device should fail
+        // because the DS stub does not know about ISO (it returns a generic value,
+        // but the control routing should hit the DS backend which doesn't error
+        // for its own devices). The key test is that it does NOT accidentally hit
+        // the Canon backend.
+        let controls = composite.get_controls(&ds_id).unwrap();
+        let has_canon_control = controls.iter().any(|c| c.id.starts_with("canon_"));
+        assert!(
+            !has_canon_control,
+            "DS device should not expose Canon-specific controls"
+        );
+    }
+}
