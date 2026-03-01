@@ -11,8 +11,12 @@ interface UsePreviewResult {
   stop: () => Promise<void>
 }
 
-/** Maximum consecutive get_frame failures before giving up (~1s at 30fps). */
-const MAX_CONSECUTIVE_FAILURES = 30
+/** Maximum consecutive get_frame failures before giving up (~2.5s at 60fps). */
+const MAX_CONSECUTIVE_FAILURES = 150
+
+/** Grace period after starting preview during which failures are ignored (ms).
+ *  Matches the backend's 5-second watchdog timeout for DirectShow graph init. */
+const STARTUP_GRACE_MS = 5_000
 
 /** Hook managing the preview lifecycle for a single camera. */
 export function usePreview(deviceId: string | null): UsePreviewResult {
@@ -23,6 +27,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
   const rafIdRef = useRef<number | null>(null)
   const prevBlobUrlRef = useRef<string | null>(null)
   const failureCountRef = useRef(0)
+  const startTimeRef = useRef(0)
 
   const cancelLoop = useCallback(() => {
     runningRef.current = false
@@ -73,6 +78,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
       setIsActive(true)
       runningRef.current = true
       failureCountRef.current = 0
+      startTimeRef.current = Date.now()
 
       const fetchFrame = async () => {
         if (!runningRef.current) return
@@ -90,14 +96,21 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
           prevBlobUrlRef.current = url
           setFrameSrc(url)
         } catch {
-          failureCountRef.current++
-          if (failureCountRef.current >= MAX_CONSECUTIVE_FAILURES) {
-            const msg = 'Preview stopped — camera is not producing frames'
-            setError(msg)
-            setIsActive(false)
-            runningRef.current = false
-            useToastStore.getState().addToast(msg, 'error')
-            return
+          const elapsed = Date.now() - startTimeRef.current
+          if (elapsed < STARTUP_GRACE_MS) {
+            // During startup grace period, reset the counter so the camera
+            // has time to initialise its capture graph before we give up.
+            failureCountRef.current = 0
+          } else {
+            failureCountRef.current++
+            if (failureCountRef.current >= MAX_CONSECUTIVE_FAILURES) {
+              const msg = 'Preview stopped — camera is not producing frames'
+              setError(msg)
+              setIsActive(false)
+              runningRef.current = false
+              useToastStore.getState().addToast(msg, 'error')
+              return
+            }
           }
         }
         if (runningRef.current) {

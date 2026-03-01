@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
@@ -24,24 +24,32 @@ function App() {
   useHotplug()
 
   const preview = usePreview(selectedCamera?.id ?? null)
-  const { start: startPreview, stop: stopPreview } = preview
+
+  // Keep refs to the latest start/stop so the effect only re-fires on camera
+  // ID changes, not when the callback references are recreated on re-render.
+  const startRef = useRef(preview.start)
+  const stopRef = useRef(preview.stop)
+  useEffect(() => {
+    startRef.current = preview.start
+    stopRef.current = preview.stop
+  })
 
   // Start preview when a camera is selected, stop when deselected or changed
   useEffect(() => {
     const cameraId = selectedCamera?.id ?? null
 
     if (cameraId) {
-      startPreview(640, 480, 30).catch((err: unknown) => {
+      startRef.current(640, 480, 30).catch((err: unknown) => {
         console.error('Failed to start preview:', err)
       })
     }
 
     return () => {
-      stopPreview().catch((err: unknown) => {
+      stopRef.current().catch((err: unknown) => {
         console.error('Failed to stop preview:', err)
       })
     }
-  }, [selectedCamera?.id, startPreview, stopPreview])
+  }, [selectedCamera?.id])
 
   return (
     <div className="app-layout">

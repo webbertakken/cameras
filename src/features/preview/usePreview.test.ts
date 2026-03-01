@@ -290,7 +290,55 @@ describe('usePreview', () => {
     })
   })
 
-  it('stops after consecutive get_frame failures and surfaces error', async () => {
+  it('does not count failures during the startup grace period', async () => {
+    const now = vi.spyOn(Date, 'now')
+    const startTime = 1000
+    now.mockReturnValue(startTime)
+
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_preview') return undefined
+      if (cmd === 'get_frame') throw new Error('no frame available')
+      if (cmd === 'stop_preview') return undefined
+      return undefined
+    })
+
+    const rafCallbacks: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const { result } = renderHook(() => usePreview('device-1'))
+
+    await act(async () => {
+      await result.current.start(640, 480, 30)
+    })
+
+    // Simulate 200 failures while still within grace period (4.9s after start)
+    now.mockReturnValue(startTime + 4900)
+    for (let i = 0; i < 200; i++) {
+      await act(async () => {
+        const cb = rafCallbacks[rafCallbacks.length - 1]
+        if (cb) await cb(performance.now())
+      })
+    }
+
+    // Should still be active — grace period protects against failure counting
+    expect(result.current.error).toBeNull()
+    expect(result.current.isActive).toBe(true)
+
+    await act(async () => {
+      await result.current.stop()
+    })
+
+    now.mockRestore()
+  })
+
+  it('stops after consecutive failures once grace period has elapsed', async () => {
+    const now = vi.spyOn(Date, 'now')
+    const startTime = 1000
+    now.mockReturnValue(startTime)
+
     let callCount = 0
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_preview') return undefined
@@ -314,27 +362,36 @@ describe('usePreview', () => {
       await result.current.start(640, 480, 30)
     })
 
-    // Trigger 30 consecutive failures (MAX_CONSECUTIVE_FAILURES)
-    for (let i = 0; i < 30; i++) {
+    // Move past grace period (5s)
+    now.mockReturnValue(startTime + 5001)
+
+    // Trigger 150 consecutive failures (MAX_CONSECUTIVE_FAILURES)
+    for (let i = 0; i < 150; i++) {
       await act(async () => {
         const cb = rafCallbacks[rafCallbacks.length - 1]
         if (cb) await cb(performance.now())
       })
     }
 
-    expect(callCount).toBe(30)
+    expect(callCount).toBe(150)
     expect(result.current.error).toBe('Preview stopped — camera is not producing frames')
     expect(result.current.isActive).toBe(false)
+
+    now.mockRestore()
   })
 
   it('resets failure counter on successful frame', async () => {
+    const now = vi.spyOn(Date, 'now')
+    const startTime = 1000
+    now.mockReturnValue(startTime)
+
     let callCount = 0
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_preview') return undefined
       if (cmd === 'get_frame') {
         callCount++
-        // Fail for 29 calls, then succeed, then fail again
-        if (callCount <= 29 || callCount === 31) {
+        // Fail for 149 calls, then succeed, then fail again
+        if (callCount <= 149 || callCount === 151) {
           throw new Error('no frame available')
         }
         return btoa(String.fromCharCode(0xff, 0xd8, 0x01))
@@ -355,8 +412,11 @@ describe('usePreview', () => {
       await result.current.start(640, 480, 30)
     })
 
-    // 29 failures — should not trigger error yet
-    for (let i = 0; i < 29; i++) {
+    // Move past grace period
+    now.mockReturnValue(startTime + 6000)
+
+    // 149 failures — should not trigger error yet
+    for (let i = 0; i < 149; i++) {
       await act(async () => {
         const cb = rafCallbacks[rafCallbacks.length - 1]
         if (cb) await cb(performance.now())
@@ -366,7 +426,7 @@ describe('usePreview', () => {
     expect(result.current.error).toBeNull()
     expect(result.current.isActive).toBe(true)
 
-    // 30th call succeeds — counter resets
+    // 150th call succeeds — counter resets
     await act(async () => {
       const cb = rafCallbacks[rafCallbacks.length - 1]
       if (cb) await cb(performance.now())
@@ -378,6 +438,8 @@ describe('usePreview', () => {
     await act(async () => {
       await result.current.stop()
     })
+
+    now.mockRestore()
   })
 
   it('unlistens for preview-error on unmount', async () => {
