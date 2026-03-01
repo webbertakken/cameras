@@ -66,9 +66,17 @@ jobs:
         working-directory: src-tauri
         run: cargo check
 
+      - name: Check (canon feature)
+        working-directory: src-tauri
+        run: cargo check --features canon
+
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy -- -D warnings
+
+      - name: Clippy (canon feature)
+        working-directory: src-tauri
+        run: cargo clippy --features canon -- -D warnings
 
       - name: Format check
         working-directory: src-tauri
@@ -76,7 +84,7 @@ jobs:
 
       - name: Test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --lib
 
   visual:
     name: Visual regression

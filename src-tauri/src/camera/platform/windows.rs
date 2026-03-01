@@ -630,6 +630,7 @@ fn make_control_descriptor(data: RawControlData) -> ControlDescriptor {
         default: Some(default),
         current,
         flags: flags_to_control_flags(caps_flags, cur_flags),
+        options: None,
         supported: true,
     }
 }

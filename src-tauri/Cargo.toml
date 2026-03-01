@@ -12,6 +12,9 @@ rust-version = "1.77.2"
 name = "cameras_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+canon = []
+
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }
 

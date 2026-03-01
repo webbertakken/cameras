@@ -173,6 +173,7 @@ impl CameraBackend for DummyBackend {
                     is_auto_enabled: false,
                     is_read_only: false,
                 },
+                options: None,
                 supported: true,
             })
             .collect();
