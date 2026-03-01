@@ -30,6 +30,7 @@ pub mod directshow {
     use crate::preview::capture::{Frame, FrameBuffer};
     use crate::preview::graph::{
         convert_bgr_bottom_up_to_rgb, convert_nv12_to_rgb, convert_yuy2_to_rgb,
+        is_obs_virtual_camera,
     };
 
     // --- Manually defined types not in windows-rs metadata ---
@@ -769,54 +770,80 @@ pub mod directshow {
                 })?;
 
             // 6. Connect: Source -> SampleGrabber -> NullRenderer
-            //    Try RGB24 first (DirectShow inserts colour converters).
-            //    If that fails (e.g. OBS Virtual Camera only outputs YUY2/NV12),
-            //    fall back to accepting any subtype and convert in the callback.
-            let rgb24_mt = AmMediaType {
-                major_type: MEDIATYPE_VIDEO,
-                sub_type: MEDIASUBTYPE_RGB24,
-                format_type: GUID::zeroed(),
-                ..AmMediaType::default()
-            };
-
-            let hr = grabber.set_media_type(&rgb24_mt);
-            if hr.is_err() {
-                error!("SetMediaType(RGB24) failed: {hr:?}");
-                return Err(format!("SetMediaType failed: {hr:?}"));
-            }
-
+            //    OBS Virtual Camera lies about supporting RGB24 (SetFormat returns
+            //    S_OK for anything) but only delivers NV12 frames reliably. When
+            //    detected, request NV12 directly to avoid the 1-frame issue.
+            //    For all other cameras, try RGB24 first then fall back to any subtype.
             let source_out = find_unconnected_pin(&source, 1)?;
             let grabber_in = find_unconnected_pin(&grabber_filter, 0)?;
-            let connect_result = graph2.Connect(&source_out, &grabber_in);
 
-            if let Err(ref e) = connect_result {
-                // 0x80040217 = VFW_E_CANNOT_CONNECT — no colour converter
-                // available. Fall back to accepting any subtype.
-                warn!("RGB24 connect failed ({e}), retrying with any subtype");
+            if is_obs_virtual_camera(friendly_name) {
+                info!("OBS Virtual Camera detected — requesting NV12 directly");
 
-                // Disconnect any partial connections before retrying
-                let _ = graph2.Disconnect(&source_out);
-                let _ = graph2.Disconnect(&grabber_in);
-
-                let any_mt = AmMediaType {
+                let nv12_mt = AmMediaType {
                     major_type: MEDIATYPE_VIDEO,
-                    sub_type: GUID::zeroed(),
+                    sub_type: MEDIASUBTYPE_NV12,
                     format_type: GUID::zeroed(),
                     ..AmMediaType::default()
                 };
 
-                let hr = grabber.set_media_type(&any_mt);
+                let hr = grabber.set_media_type(&nv12_mt);
                 if hr.is_err() {
-                    error!("SetMediaType(any) failed: {hr:?}");
-                    return Err(format!("SetMediaType(any) failed: {hr:?}"));
+                    error!("SetMediaType(NV12) failed: {hr:?}");
+                    return Err(format!("SetMediaType(NV12) failed: {hr:?}"));
                 }
 
                 graph2.Connect(&source_out, &grabber_in).map_err(|e| {
-                    error!("failed to connect source -> grabber (fallback): {e}");
+                    error!("failed to connect OBS source -> grabber (NV12): {e}");
                     format!("failed to connect source -> grabber: {e}")
                 })?;
 
-                info!("connected with any-subtype fallback");
+                info!("connected OBS Virtual Camera with NV12");
+            } else {
+                let rgb24_mt = AmMediaType {
+                    major_type: MEDIATYPE_VIDEO,
+                    sub_type: MEDIASUBTYPE_RGB24,
+                    format_type: GUID::zeroed(),
+                    ..AmMediaType::default()
+                };
+
+                let hr = grabber.set_media_type(&rgb24_mt);
+                if hr.is_err() {
+                    error!("SetMediaType(RGB24) failed: {hr:?}");
+                    return Err(format!("SetMediaType failed: {hr:?}"));
+                }
+
+                let connect_result = graph2.Connect(&source_out, &grabber_in);
+
+                if let Err(ref e) = connect_result {
+                    // 0x80040217 = VFW_E_CANNOT_CONNECT — no colour converter
+                    // available. Fall back to accepting any subtype.
+                    warn!("RGB24 connect failed ({e}), retrying with any subtype");
+
+                    // Disconnect any partial connections before retrying
+                    let _ = graph2.Disconnect(&source_out);
+                    let _ = graph2.Disconnect(&grabber_in);
+
+                    let any_mt = AmMediaType {
+                        major_type: MEDIATYPE_VIDEO,
+                        sub_type: GUID::zeroed(),
+                        format_type: GUID::zeroed(),
+                        ..AmMediaType::default()
+                    };
+
+                    let hr = grabber.set_media_type(&any_mt);
+                    if hr.is_err() {
+                        error!("SetMediaType(any) failed: {hr:?}");
+                        return Err(format!("SetMediaType(any) failed: {hr:?}"));
+                    }
+
+                    graph2.Connect(&source_out, &grabber_in).map_err(|e| {
+                        error!("failed to connect source -> grabber (fallback): {e}");
+                        format!("failed to connect source -> grabber: {e}")
+                    })?;
+
+                    info!("connected with any-subtype fallback");
+                }
             }
 
             // 7. Connect: SampleGrabber -> NullRenderer
@@ -948,6 +975,17 @@ pub mod directshow {
 
         Err(format!("no unconnected pin with direction {direction}"))
     }
+}
+
+/// Returns `true` if the friendly name looks like an OBS Virtual Camera.
+///
+/// OBS Virtual Camera lies about supporting RGB24 format — `SetFormat()`
+/// returns `S_OK` for anything but it only delivers NV12 frames reliably.
+/// When detected, the capture graph should request NV12 directly instead
+/// of relying on DirectShow's colour converter + RGB24.
+pub fn is_obs_virtual_camera(friendly_name: &str) -> bool {
+    let lower = friendly_name.to_ascii_lowercase();
+    lower.contains("obs") && lower.contains("virtual")
 }
 
 /// Convert BGR24 bottom-up data to RGB24 top-down.
@@ -1229,5 +1267,20 @@ mod tests {
         for pixel in rgb.chunks(3) {
             assert_eq!(pixel, [235, 235, 235]);
         }
+    }
+
+    #[test]
+    fn detects_obs_virtual_camera() {
+        assert!(is_obs_virtual_camera("OBS Virtual Camera"));
+        assert!(is_obs_virtual_camera("OBS-Virtual-Camera"));
+        assert!(is_obs_virtual_camera("obs virtual cam"));
+    }
+
+    #[test]
+    fn does_not_detect_real_cameras_as_obs() {
+        assert!(!is_obs_virtual_camera("Logitech C920"));
+        assert!(!is_obs_virtual_camera("HD Webcam"));
+        assert!(!is_obs_virtual_camera("Virtual Camera"));
+        assert!(!is_obs_virtual_camera("OBS Studio"));
     }
 }
