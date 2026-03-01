@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
 import { ToastContainer } from './features/notifications'
@@ -9,7 +9,6 @@ import './App.css'
 function App() {
   const setCameras = useCameraStore((s) => s.setCameras)
   const selectedCamera = useCameraStore((s) => s.selectedCamera())
-  const prevCameraId = useRef<string | null>(null)
 
   useEffect(() => {
     listCameras()
@@ -23,12 +22,11 @@ function App() {
 
   const preview = usePreview(selectedCamera?.id ?? null)
 
-  // Start preview when a camera is selected, stop when deselected or changed
+  // Start preview when a camera is selected, stop when deselected or changed.
+  // No ref guard — the backend handles deduplication, and this must survive
+  // React 18 strict mode's mount→cleanup→mount cycle.
   useEffect(() => {
     const cameraId = selectedCamera?.id ?? null
-
-    if (cameraId === prevCameraId.current) return
-    prevCameraId.current = cameraId
 
     if (cameraId) {
       preview.start(640, 480, 30).catch((err: unknown) => {

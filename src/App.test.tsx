@@ -102,4 +102,40 @@ describe('App', () => {
       })
     })
   })
+
+  it('restarts preview after strict mode remount (mount-cleanup-mount)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const mockInvoke = vi.mocked(invoke)
+    mockInvoke.mockResolvedValue(undefined)
+
+    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
+    const { unmount } = render(<App />)
+
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
+        deviceId: 'cam-1',
+        width: 640,
+        height: 480,
+        fps: 30,
+      })
+    })
+
+    // Simulate strict mode: unmount then re-render with same camera ID
+    unmount()
+    mockInvoke.mockClear()
+    mockInvoke.mockResolvedValue(undefined)
+
+    // Re-set state — unmount doesn't clear Zustand, but beforeEach does
+    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
+    render(<App />)
+
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
+        deviceId: 'cam-1',
+        width: 640,
+        height: 480,
+        fps: 30,
+      })
+    })
+  })
 })
