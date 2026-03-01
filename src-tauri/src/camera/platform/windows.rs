@@ -173,11 +173,23 @@ impl Drop for ComGuard {
     }
 }
 
+/// Wrapper around IBaseFilter to allow cross-thread sharing.
+///
+/// # Safety
+/// COM objects in MTA (multi-threaded apartment) mode can safely be accessed
+/// from any MTA-initialised thread. All our COM calls use `CoInitializeEx`
+/// with `COINIT_MULTITHREADED`, so cross-thread access is valid.
+struct SendFilter(windows::Win32::Media::DirectShow::IBaseFilter);
+unsafe impl Send for SendFilter {}
+
 /// Windows camera backend using DirectShow.
 pub struct WindowsBackend {
     enumerator: Box<dyn DeviceEnumerator>,
     /// Cache of known devices for diffing during hot-plug.
     known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
+    /// Cached IBaseFilter per device path to avoid repeated COM enumeration
+    /// that causes resource conflicts when a capture graph is active.
+    filter_cache: Arc<Mutex<HashMap<String, SendFilter>>>,
 }
 
 impl WindowsBackend {
@@ -187,6 +199,7 @@ impl WindowsBackend {
         Self {
             enumerator: Box::new(DirectShowEnumerator::new()),
             known_devices: Arc::new(Mutex::new(HashMap::new())),
+            filter_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -196,7 +209,41 @@ impl WindowsBackend {
         Self {
             enumerator,
             known_devices: Arc::new(Mutex::new(HashMap::new())),
+            filter_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Get a cached IBaseFilter for the device, or create one via COM
+    /// enumeration. Cloning the COM interface increments the reference count.
+    fn get_or_create_filter(
+        &self,
+        device_path: &str,
+        friendly_name: &str,
+    ) -> Result<windows::Win32::Media::DirectShow::IBaseFilter> {
+        let cache_key = if device_path.is_empty() {
+            friendly_name.to_string()
+        } else {
+            device_path.to_string()
+        };
+
+        // Check cache first
+        {
+            let cache = self.filter_cache.lock().unwrap();
+            if let Some(entry) = cache.get(&cache_key) {
+                debug!("using cached IBaseFilter for {cache_key}");
+                return Ok(entry.0.clone());
+            }
+        }
+
+        // Cache miss — create via COM enumeration
+        let filter = unsafe { find_device_filter(device_path, friendly_name)? };
+
+        {
+            let mut cache = self.filter_cache.lock().unwrap();
+            cache.insert(cache_key, SendFilter(filter.clone()));
+        }
+
+        Ok(filter)
     }
 
     /// Convert raw device info into a `CameraDevice`.
@@ -233,11 +280,12 @@ impl CameraBackend for WindowsBackend {
 
     fn watch_hotplug(&self, callback: Box<dyn Fn(HotplugEvent) + Send>) -> Result<()> {
         let enumerator_known = Arc::clone(&self.known_devices);
+        let filter_cache = Arc::clone(&self.filter_cache);
 
         std::thread::Builder::new()
             .name("camera-hotplug".to_string())
             .spawn(move || {
-                if let Err(e) = run_hotplug_loop(enumerator_known, callback) {
+                if let Err(e) = run_hotplug_loop(enumerator_known, filter_cache, callback) {
                     error!("Hotplug loop exited with error: {e}");
                 }
             })
@@ -256,7 +304,8 @@ impl CameraBackend for WindowsBackend {
         let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { query_device_controls(&device_path, &friendly_name) }
+        let filter = self.get_or_create_filter(&device_path, &friendly_name)?;
+        unsafe { query_device_controls_with_filter(&filter) }
     }
 
     fn get_control(&self, id: &DeviceId, control: &ControlId) -> Result<ControlValue> {
@@ -281,7 +330,8 @@ impl CameraBackend for WindowsBackend {
         let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { set_device_control(&device_path, &friendly_name, control, value) }
+        let filter = self.get_or_create_filter(&device_path, &friendly_name)?;
+        unsafe { set_device_control_with_filter(&filter, control, value) }
     }
 
     fn get_formats(&self, id: &DeviceId) -> Result<Vec<FormatDescriptor>> {
@@ -294,7 +344,8 @@ impl CameraBackend for WindowsBackend {
         let friendly_name = device.name.clone();
         drop(known);
 
-        unsafe { query_device_formats(&device_path, &friendly_name) }
+        let filter = self.get_or_create_filter(&device_path, &friendly_name)?;
+        unsafe { query_device_formats_with_filter(&filter) }
     }
 }
 
@@ -433,15 +484,13 @@ fn flags_to_control_flags(caps_flags: i32, cur_flags: i32) -> ControlFlags {
     }
 }
 
-/// Query controls from a device via DirectShow.
+/// Query controls from a pre-resolved IBaseFilter via DirectShow.
 ///
 /// # Safety
-/// Calls COM APIs.
-unsafe fn query_device_controls(
-    device_path: &str,
-    friendly_name: &str,
+/// Calls COM APIs. Caller must ensure COM is initialised on the current thread.
+unsafe fn query_device_controls_with_filter(
+    filter: &windows::Win32::Media::DirectShow::IBaseFilter,
 ) -> Result<Vec<ControlDescriptor>> {
-    let filter = find_device_filter(device_path, friendly_name)?;
     let mut controls = Vec::new();
 
     // Query IAMCameraControl (properties 0-6)
@@ -571,20 +620,16 @@ fn make_control_descriptor(data: RawControlData) -> ControlDescriptor {
     }
 }
 
-/// Set a control value on a device via DirectShow.
+/// Set a control value on a pre-resolved IBaseFilter via DirectShow.
 ///
 /// # Safety
-/// Calls COM APIs.
-unsafe fn set_device_control(
-    device_path: &str,
-    friendly_name: &str,
+/// Calls COM APIs. Caller must ensure COM is initialised on the current thread.
+unsafe fn set_device_control_with_filter(
+    filter: &windows::Win32::Media::DirectShow::IBaseFilter,
     control: &ControlId,
     value: ControlValue,
 ) -> Result<()> {
     let name = control.display_name();
-    let filter = find_device_filter(device_path, friendly_name).map_err(|e| {
-        CameraError::ControlWrite(format!("Failed to set {name}: device not found ({e})"))
-    })?;
 
     if let Some(prop_index) = control_id_to_camera_property(control) {
         let cam_ctrl = filter.cast::<IAMCameraControl>().map_err(|e| {
@@ -619,19 +664,15 @@ unsafe fn set_device_control(
     Ok(())
 }
 
-/// Query supported formats from a device.
+/// Query supported formats from a pre-resolved IBaseFilter.
 ///
 /// # Safety
-/// Calls COM APIs.
-unsafe fn query_device_formats(
-    device_path: &str,
-    friendly_name: &str,
+/// Calls COM APIs. Caller must ensure COM is initialised on the current thread.
+unsafe fn query_device_formats_with_filter(
+    filter: &windows::Win32::Media::DirectShow::IBaseFilter,
 ) -> Result<Vec<FormatDescriptor>> {
     use windows::Win32::Media::DirectShow::IAMStreamConfig;
     use windows::Win32::Media::MediaFoundation::{FORMAT_VideoInfo, VIDEOINFOHEADER};
-
-    let filter = find_device_filter(device_path, friendly_name)
-        .map_err(|e| CameraError::FormatQuery(e.to_string()))?;
 
     let pin_enum = filter
         .EnumPins()
@@ -742,6 +783,7 @@ fn fourcc_to_string(guid: GUID) -> String {
 /// Context passed to the hotplug window procedure via GWLP_USERDATA.
 struct HotplugContext {
     known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
+    filter_cache: Arc<Mutex<HashMap<String, SendFilter>>>,
     callback: Box<dyn Fn(HotplugEvent) + Send>,
 }
 
@@ -792,6 +834,19 @@ fn handle_device_change(ctx: &HotplugContext) {
     let events = diff_devices(&mut known, current);
     drop(known);
 
+    for event in &events {
+        if let HotplugEvent::Disconnected { id } = event {
+            // Invalidate cached IBaseFilter for disconnected devices
+            let mut cache = ctx.filter_cache.lock().unwrap();
+            cache.retain(|_key, _filter| {
+                // Flush entire cache on disconnect — the device path may not
+                // map 1:1 to the cache key, so a full clear is safest.
+                false
+            });
+            info!("invalidated filter cache after disconnect of {id}");
+        }
+    }
+
     for event in events {
         info!("Hotplug event: {event:?}");
         (ctx.callback)(event);
@@ -801,6 +856,7 @@ fn handle_device_change(ctx: &HotplugContext) {
 /// Run the hot-plug detection message loop.
 fn run_hotplug_loop(
     known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
+    filter_cache: Arc<Mutex<HashMap<String, SendFilter>>>,
     callback: Box<dyn Fn(HotplugEvent) + Send>,
 ) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -842,6 +898,7 @@ fn run_hotplug_loop(
         // Store context on the HWND so wnd_proc can access it
         let ctx = Box::new(HotplugContext {
             known_devices,
+            filter_cache,
             callback,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(ctx) as isize);
