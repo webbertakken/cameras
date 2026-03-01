@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/webbertakken/cameras/compare/v0.5.0...v0.6.0) (2026-02-28)
+
+
+### Features
+
+* **tray:** replace menu with show/hide, app settings, exit ([#44](https://github.com/webbertakken/cameras/issues/44)) ([05a3a3f](https://github.com/webbertakken/cameras/commit/05a3a3fdce7aabe47dafa3cd469f7d4883650ee8))
+
+
+### Bug fixes
+
+* **settings:** close debounce race window and remove AMBIGUITIES.md ([#45](https://github.com/webbertakken/cameras/issues/45)) ([8a1b491](https://github.com/webbertakken/cameras/commit/8a1b4915615d9809c53c95892126c1f8028fd7fc))
+
 ## [0.5.0](https://github.com/webbertakken/cameras/compare/v0.4.0...v0.5.0) (2026-02-28)
 
 
