@@ -11,6 +11,19 @@
 
 ### Changed
 
+- Create DEVELOPMENT.md with dev setup and EDSDK instructions (#56)
+- End-to-end smoke test with MockEdsSdk (#46)
+- CI configuration for Canon feature (#45)
+- CameraError variants for Canon (#44)
+- Wire CompositeBackend into app startup (#41)
+- CompositeBackend implementation (#40)
+- EDSDK event loop (#37)
+- Periodic re-enumeration for new connections (#36)
+- EDSDK state event handler (#35)
+- EDSDK value translation (#34)
+- Canon property read/write (#33)
+- Canon property to ControlDescriptor mapping (#32)
+
 - Merge PR #48 (runtime bug fixes) (#3)
 - Fix: clean up AMBIGUITIES.md (section 10) (#13)
 - Fix: debounce race window (section 9) (#12)

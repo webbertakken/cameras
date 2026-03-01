@@ -8,6 +8,9 @@ dist/
 # Rust
 target/
 
+# Proprietary SDK libraries
+src-tauri/lib/
+
 # Editor
 .vscode/
 .idea/
