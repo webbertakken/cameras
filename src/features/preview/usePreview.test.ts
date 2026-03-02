@@ -421,4 +421,95 @@ describe('usePreview', () => {
 
     expect(mockUnlisten).toHaveBeenCalled()
   })
+
+  it('discards in-flight frames from a previous camera when switching devices', async () => {
+    // Simulate the race condition:
+    // 1. Camera A's loop starts, get_frame call is in-flight
+    // 2. Camera B is selected — start() is called again
+    // 3. Camera A's in-flight call resolves AFTER B's loop has started
+    // 4. The stale frame from A must NOT be written to frameSrc
+
+    let resolveOldFrame: ((value: string) => void) | null = null
+    const cameraABase64 = btoa(String.fromCharCode(0xff, 0xd8, 0xaa))
+    const cameraBBase64 = btoa(String.fromCharCode(0xff, 0xd8, 0xbb))
+
+    mockInvoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'get_frame') {
+        const id = (args as Record<string, unknown>)?.deviceId as string
+
+        if (id === 'camera-a' && !resolveOldFrame) {
+          // First call for camera A: return a promise we control
+          return new Promise<string>((resolve) => {
+            resolveOldFrame = resolve
+          })
+        }
+        // Camera B calls resolve immediately
+        return cameraBBase64
+      }
+      return undefined
+    })
+
+    mockCreateObjectURL
+      .mockReturnValueOnce('blob:camera-b-frame')
+      .mockReturnValueOnce('blob:camera-a-stale-frame')
+
+    const rafCallbacks: FrameRequestCallback[] = []
+    const originalRaf = globalThis.requestAnimationFrame
+    const originalCaf = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    }
+    globalThis.cancelAnimationFrame = () => {}
+
+    const { result, rerender, unmount } = renderHook(({ deviceId }) => usePreview(deviceId), {
+      initialProps: { deviceId: 'camera-a' },
+    })
+
+    // Start loop for camera A — schedules rAF
+    act(() => {
+      result.current.start()
+    })
+
+    // Fire camera A's rAF callback — this kicks off get_frame which will hang.
+    // We call the callback directly (not awaiting) to simulate the in-flight state.
+    const cameraARafIdx = rafCallbacks.length - 1
+    void rafCallbacks[cameraARafIdx](performance.now())
+
+    // While camera A's get_frame is in-flight, switch to camera B
+    rerender({ deviceId: 'camera-b' })
+    act(() => {
+      result.current.start()
+    })
+
+    // Trigger rAF for camera B — resolves immediately with a frame
+    await act(async () => {
+      const cameraBRafCb = rafCallbacks[rafCallbacks.length - 1]
+      await cameraBRafCb(performance.now())
+    })
+
+    expect(result.current.frameSrc).toBe('blob:camera-b-frame')
+
+    // Now resolve camera A's stale in-flight call
+    await act(async () => {
+      resolveOldFrame?.(cameraABase64)
+      // Allow microtasks to settle so camera A's fetchFrame continues
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // frameSrc must still be camera B's frame — stale frame from A must be discarded
+    expect(result.current.frameSrc).toBe('blob:camera-b-frame')
+
+    act(() => {
+      result.current.stop()
+    })
+
+    // Restore rAF/cAF before unmount so React effects can schedule normally
+    globalThis.requestAnimationFrame = originalRaf
+    globalThis.cancelAnimationFrame = originalCaf
+
+    // Unmount and flush async cleanup (listen/unlisten promises)
+    unmount()
+    await act(async () => {})
+  })
 })
