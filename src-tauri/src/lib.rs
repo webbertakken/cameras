@@ -21,9 +21,10 @@ use camera::commands::{
 };
 use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{
-    get_diagnostics, get_frame, get_thumbnail, start_all_previews, start_preview, stop_preview,
-    PreviewState,
+    get_active_gpu, get_diagnostics, get_frame, get_thumbnail, list_gpu_adapters, set_gpu_adapter,
+    start_all_previews, start_preview, stop_preview, PreviewState,
 };
+use preview::gpu::GpuState;
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
 use settings::store::SettingsStore;
 
@@ -135,6 +136,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .manage(create_camera_state())
         .manage(PreviewState::new())
+        .manage(GpuState::new())
         .invoke_handler(tauri::generate_handler![
             list_cameras,
             get_camera_controls,
@@ -149,6 +151,9 @@ pub fn run() {
             get_diagnostics,
             reset_to_defaults,
             get_saved_settings,
+            list_gpu_adapters,
+            get_active_gpu,
+            set_gpu_adapter,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -196,6 +201,8 @@ pub fn run() {
             // Auto-start preview sessions for all connected cameras
             {
                 let preview_state = app.state::<PreviewState>();
+                let gpu_state = app.state::<GpuState>();
+                let gpu = gpu_state.context();
                 let mut sessions = preview_state.sessions.lock();
                 if let Ok(ref devices) = camera_state.backend.enumerate_devices() {
                     for device in devices {
@@ -224,6 +231,7 @@ pub fn run() {
                             480,
                             30.0,
                             Some(on_error),
+                            gpu.clone(),
                         );
                         sessions.insert(device_id, session);
                         tracing::info!(

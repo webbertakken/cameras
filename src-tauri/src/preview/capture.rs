@@ -6,6 +6,7 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
+use crate::preview::gpu::GpuContext;
 
 /// Callback type for reporting capture errors to the frontend.
 /// Arguments: (device_id, error_message).
@@ -129,12 +130,15 @@ impl CaptureSession {
     /// Create and start a capture session for the given device.
     ///
     /// On Windows, spawns a thread that builds a DirectShow filter graph
-    /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
+    /// (Source -> SampleGrabber -> NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
     ///
     /// If `on_error` is provided, it is called with `(device_id, error_msg)`
     /// when the capture graph fails, allowing the caller to surface errors
     /// to the frontend.
+    ///
+    /// If `gpu` is provided, colour conversion runs on the GPU; otherwise
+    /// the CPU fallback is used.
     pub fn new(
         device_id: String,
         friendly_name: String,
@@ -142,6 +146,7 @@ impl CaptureSession {
         height: u32,
         _fps: f32,
         on_error: Option<ErrorCallback>,
+        gpu: Option<Arc<GpuContext>>,
     ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
@@ -173,6 +178,7 @@ impl CaptureSession {
                                 buffer_clone,
                                 running_clone,
                                 stats_clone,
+                                gpu,
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
                                 if let Some(cb) = &on_error {
@@ -196,6 +202,7 @@ impl CaptureSession {
                     width,
                     height,
                     on_error,
+                    gpu,
                 );
                 None
             }
@@ -420,6 +427,7 @@ mod tests {
             1080,
             30.0,
             None,
+            None,
         );
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
@@ -433,6 +441,7 @@ mod tests {
             640,
             480,
             30.0,
+            None,
             None,
         );
         session.stop();
@@ -471,6 +480,7 @@ mod tests {
             480,
             30.0,
             Some(on_error),
+            None,
         );
         // On non-Windows, no capture thread spawns, so callback won't fire
         // but the session should still be valid

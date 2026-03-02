@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::capture::{CaptureSession, PreviewErrorPayload};
 use super::compress;
+use super::gpu::{GpuAdapterInfo, GpuState};
 use crate::camera::commands::CameraState;
 use crate::camera::error::humanise_error;
 use crate::camera::types::{CameraDevice, DeviceId};
@@ -59,10 +60,12 @@ fn resolve_device_info(
 
 /// Start a camera preview session.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_preview(
     app: AppHandle,
     state: State<'_, PreviewState>,
     camera_state: State<'_, CameraState>,
+    gpu_state: State<'_, GpuState>,
     device_id: String,
     width: u32,
     height: u32,
@@ -95,6 +98,7 @@ pub async fn start_preview(
         }) as super::capture::ErrorCallback
     };
 
+    let gpu = gpu_state.context();
     let session = CaptureSession::new(
         device_path,
         friendly_name,
@@ -102,6 +106,7 @@ pub async fn start_preview(
         height,
         fps,
         Some(on_error),
+        gpu,
     );
     sessions.insert(device_id, session);
     Ok(())
@@ -116,6 +121,7 @@ pub async fn start_all_previews(
     app: AppHandle,
     state: State<'_, PreviewState>,
     camera_state: State<'_, CameraState>,
+    gpu_state: State<'_, GpuState>,
 ) -> Result<(), String> {
     let devices = camera_state
         .backend
@@ -123,6 +129,7 @@ pub async fn start_all_previews(
         .map_err(|e| humanise_error(&format!("failed to enumerate devices: {e}")))?;
 
     let mut sessions = state.sessions.lock();
+    let gpu = gpu_state.context();
 
     for device in &devices {
         let device_id = device.id.as_str().to_string();
@@ -152,6 +159,7 @@ pub async fn start_all_previews(
             480,
             30.0,
             Some(on_error),
+            gpu.clone(),
         );
         sessions.insert(device_id.clone(), session);
         tracing::info!("Auto-started preview session for '{}'", device.name);
@@ -208,6 +216,9 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
         }) as super::capture::ErrorCallback
     };
 
+    // Get GPU context if available
+    let gpu = app.try_state::<GpuState>().and_then(|s| s.context());
+
     let session = CaptureSession::new(
         device.device_path.clone(),
         device.name.clone(),
@@ -215,6 +226,7 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
         480,
         30.0,
         Some(on_error),
+        gpu,
     );
     sessions.insert(device_id.to_string(), session);
     tracing::info!(
@@ -342,6 +354,32 @@ pub async fn get_diagnostics(
     Ok(session.diagnostics())
 }
 
+/// List all available GPU adapters on the system.
+#[tauri::command]
+pub async fn list_gpu_adapters() -> Vec<GpuAdapterInfo> {
+    super::gpu::GpuContext::enumerate_adapters()
+}
+
+/// Get information about the currently active GPU adapter.
+///
+/// Returns `null` if GPU acceleration is disabled (CPU-only mode).
+#[tauri::command]
+pub async fn get_active_gpu(state: State<'_, GpuState>) -> Result<Option<GpuAdapterInfo>, String> {
+    Ok(state.context().map(|ctx| ctx.adapter_info()))
+}
+
+/// Switch the active GPU adapter, or disable GPU acceleration.
+///
+/// Pass `adapterIndex: null` to switch to CPU-only mode.
+/// Returns the name of the newly selected adapter, or `null` if disabled.
+#[tauri::command]
+pub async fn set_gpu_adapter(
+    state: State<'_, GpuState>,
+    adapter_index: Option<usize>,
+) -> Result<Option<String>, String> {
+    Ok(state.set_adapter(adapter_index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +422,7 @@ mod tests {
                 480,
                 30.0,
                 None,
+                None,
             );
             sessions.insert("test-device".to_string(), session);
         }
@@ -402,6 +441,7 @@ mod tests {
                 640,
                 480,
                 30.0,
+                None,
                 None,
             );
             sessions.insert("test-device".to_string(), session);
@@ -430,8 +470,15 @@ mod tests {
         let frame = make_rgb_frame(10, 10);
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("test-device".to_string(), String::new(), 10, 10, 30.0, None);
+            let session = CaptureSession::new(
+                "test-device".to_string(),
+                String::new(),
+                10,
+                10,
+                30.0,
+                None,
+                None,
+            );
             session.buffer().push(frame);
             sessions.insert("test-device".to_string(), session);
         }
@@ -477,7 +524,8 @@ mod tests {
         let state = make_preview_state();
 
         // Insert a session with a frame
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session =
+            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
         session.buffer().push(make_rgb_frame(10, 10));
         let seq = session.buffer().sequence();
         state.sessions.lock().insert("dev-1".to_string(), session);
@@ -518,7 +566,8 @@ mod tests {
         );
 
         // Push a new frame — sequence advances to 2
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session =
+            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
         session.buffer().push(make_rgb_frame(10, 10));
         session.buffer().push(make_rgb_frame(10, 10));
         let new_seq = session.buffer().sequence();
@@ -534,7 +583,8 @@ mod tests {
         let state = make_preview_state();
 
         // Create session and cache entry
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session =
+            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
         state.sessions.lock().insert("dev-1".to_string(), session);
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
@@ -573,6 +623,7 @@ mod tests {
                     480,
                     30.0,
                     None,
+                    None,
                 );
                 sessions.insert(id.to_string(), session);
             }
@@ -599,6 +650,7 @@ mod tests {
                 480,
                 30.0,
                 None,
+                None,
             );
             sessions.insert("cam-1".to_string(), session);
         }
@@ -614,6 +666,7 @@ mod tests {
                         640,
                         480,
                         30.0,
+                        None,
                         None,
                     );
                     sessions.insert(id.to_string(), session);
@@ -634,8 +687,15 @@ mod tests {
         // Create session and cache
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("cam-1".to_string(), String::new(), 640, 480, 30.0, None);
+            let session = CaptureSession::new(
+                "cam-1".to_string(),
+                String::new(),
+                640,
+                480,
+                30.0,
+                None,
+                None,
+            );
             sessions.insert("cam-1".to_string(), session);
         }
         state.jpeg_cache.lock().insert(
@@ -662,7 +722,8 @@ mod tests {
     #[test]
     fn frame_buffer_latest_returns_arc() {
         let state = make_preview_state();
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session =
+            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
         session.buffer().push(make_rgb_frame(10, 10));
         state.sessions.lock().insert("dev-1".to_string(), session);
 

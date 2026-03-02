@@ -6,3 +6,7 @@
   font-size: var(--font-size-lg);
   font-weight: 600;
 }
+
+.settings-page__section {
+  margin-top: var(--space-6);
+}
