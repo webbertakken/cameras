@@ -13,7 +13,7 @@ mod tray;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use camera::commands::{
     get_camera_controls, get_camera_formats, list_cameras, reset_camera_control,
@@ -21,7 +21,8 @@ use camera::commands::{
 };
 use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{
-    get_diagnostics, get_frame, get_thumbnail, start_preview, stop_preview, PreviewState,
+    get_diagnostics, get_frame, get_thumbnail, start_all_previews, start_preview, stop_preview,
+    PreviewState,
 };
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
 use settings::store::SettingsStore;
@@ -141,6 +142,7 @@ pub fn run() {
             set_camera_control,
             reset_camera_control,
             start_preview,
+            start_all_previews,
             stop_preview,
             get_frame,
             get_thumbnail,
@@ -187,6 +189,47 @@ pub fn run() {
                     );
                     if !applied.is_empty() {
                         tracing::info!("Restored {} settings for '{}'", applied.len(), device.name);
+                    }
+                }
+            }
+
+            // Auto-start preview sessions for all connected cameras
+            {
+                let preview_state = app.state::<PreviewState>();
+                let mut sessions = preview_state.sessions.lock();
+                if let Ok(ref devices) = camera_state.backend.enumerate_devices() {
+                    for device in devices {
+                        let device_id = device.id.as_str().to_string();
+                        if sessions.contains_key(&device_id) {
+                            continue;
+                        }
+
+                        let on_error = {
+                            let app_handle = app.handle().clone();
+                            std::sync::Arc::new(move |dev_id: &str, error: &str| {
+                                let _ = app_handle.emit(
+                                    "preview-error",
+                                    preview::capture::PreviewErrorPayload {
+                                        device_id: dev_id.to_string(),
+                                        error: camera::error::humanise_error(error),
+                                    },
+                                );
+                            }) as preview::capture::ErrorCallback
+                        };
+
+                        let session = preview::capture::CaptureSession::new(
+                            device.device_path.clone(),
+                            device.name.clone(),
+                            640,
+                            480,
+                            30.0,
+                            Some(on_error),
+                        );
+                        sessions.insert(device_id, session);
+                        tracing::info!(
+                            "Auto-started preview session for '{}' at startup",
+                            device.name
+                        );
                     }
                 }
             }

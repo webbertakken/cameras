@@ -4,7 +4,7 @@ import type { CameraDevice } from './types/camera'
 import { useCameraStore } from './features/camera-sidebar/store'
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
+  invoke: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -59,10 +59,11 @@ describe('App', () => {
     expect(screen.getByRole('region', { name: 'Camera controls' })).toBeInTheDocument()
   })
 
-  it('renders PreviewCanvas when camera is selected', () => {
+  it('renders PreviewCanvas in loading state when camera is selected', () => {
     useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
     render(<App />)
-    expect(screen.getByRole('img', { name: 'No preview available' })).toBeInTheDocument()
+    // Display loop starts immediately; shows loading state until frames arrive
+    expect(screen.getByRole('img', { name: 'Loading preview' })).toBeInTheDocument()
   })
 
   it('shows placeholder again when camera is deselected', () => {
@@ -85,57 +86,32 @@ describe('App', () => {
     expect(screen.getByRole('region', { name: 'Camera controls' })).toBeInTheDocument()
   })
 
-  it('calls start_preview when camera is selected', async () => {
+  it('calls start_all_previews on mount', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     const mockInvoke = vi.mocked(invoke)
     mockInvoke.mockResolvedValue(undefined)
 
-    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
     render(<App />)
 
     await vi.waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
-        deviceId: 'cam-1',
-        width: 640,
-        height: 480,
-        fps: 30,
-      })
+      expect(mockInvoke).toHaveBeenCalledWith('start_all_previews')
     })
   })
 
-  it('restarts preview after strict mode remount (mount-cleanup-mount)', async () => {
+  it('does not call start_preview IPC — sessions are backend-managed', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     const mockInvoke = vi.mocked(invoke)
     mockInvoke.mockResolvedValue(undefined)
 
     useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
-    const { unmount } = render(<App />)
-
-    await vi.waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
-        deviceId: 'cam-1',
-        width: 640,
-        height: 480,
-        fps: 30,
-      })
-    })
-
-    // Simulate strict mode: unmount then re-render with same camera ID
-    unmount()
-    mockInvoke.mockClear()
-    mockInvoke.mockResolvedValue(undefined)
-
-    // Re-set state — unmount doesn't clear Zustand, but beforeEach does
-    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
     render(<App />)
 
+    // Wait for effects to settle
     await vi.waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('start_preview', {
-        deviceId: 'cam-1',
-        width: 640,
-        height: 480,
-        fps: 30,
-      })
+      expect(mockInvoke).toHaveBeenCalledWith('start_all_previews')
     })
+
+    // start_preview should never be called — sessions are started by the backend
+    expect(mockInvoke).not.toHaveBeenCalledWith('start_preview', expect.anything())
   })
 })

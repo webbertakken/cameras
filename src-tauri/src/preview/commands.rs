@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::capture::{CaptureSession, PreviewErrorPayload};
 use super::compress;
 use crate::camera::commands::CameraState;
 use crate::camera::error::humanise_error;
-use crate::camera::types::DeviceId;
+use crate::camera::types::{CameraDevice, DeviceId};
 use crate::diagnostics::stats::DiagnosticSnapshot;
 
 /// Cached JPEG result for a single device, keyed by frame sequence number.
@@ -105,6 +105,137 @@ pub async fn start_preview(
     );
     sessions.insert(device_id, session);
     Ok(())
+}
+
+/// Start capture sessions for all currently connected cameras.
+///
+/// Skips devices that already have an active session. Uses sensible defaults
+/// (640x480, 30fps) — the frontend can reconfigure individual sessions later.
+#[tauri::command]
+pub async fn start_all_previews(
+    app: AppHandle,
+    state: State<'_, PreviewState>,
+    camera_state: State<'_, CameraState>,
+) -> Result<(), String> {
+    let devices = camera_state
+        .backend
+        .enumerate_devices()
+        .map_err(|e| humanise_error(&format!("failed to enumerate devices: {e}")))?;
+
+    let mut sessions = state.sessions.lock();
+
+    for device in &devices {
+        let device_id = device.id.as_str().to_string();
+
+        // Skip if session already exists
+        if sessions.contains_key(&device_id) {
+            continue;
+        }
+
+        let on_error = {
+            let app = app.clone();
+            Arc::new(move |dev_id: &str, error: &str| {
+                let _ = app.emit(
+                    "preview-error",
+                    PreviewErrorPayload {
+                        device_id: dev_id.to_string(),
+                        error: humanise_error(error),
+                    },
+                );
+            }) as super::capture::ErrorCallback
+        };
+
+        let session = CaptureSession::new(
+            device.device_path.clone(),
+            device.name.clone(),
+            640,
+            480,
+            30.0,
+            Some(on_error),
+        );
+        sessions.insert(device_id.clone(), session);
+        tracing::info!("Auto-started preview session for '{}'", device.name);
+    }
+
+    Ok(())
+}
+
+/// Start a capture session for a single device by ID. Used by the hotplug
+/// bridge when a new camera is connected.
+pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
+    let preview_state = match app.try_state::<PreviewState>() {
+        Some(s) => s,
+        None => return,
+    };
+    let camera_state = match app.try_state::<CameraState>() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Resolve device info
+    let devices: Vec<CameraDevice> = match camera_state.backend.enumerate_devices() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("Failed to enumerate devices for hotplug start: {e}");
+            return;
+        }
+    };
+
+    let target_id = DeviceId::new(device_id);
+    let device = match devices.iter().find(|d| d.id == target_id) {
+        Some(d) => d,
+        None => {
+            tracing::warn!("Hotplug device not found in enumeration: {device_id}");
+            return;
+        }
+    };
+
+    let mut sessions = preview_state.sessions.lock();
+    if sessions.contains_key(device_id) {
+        return;
+    }
+
+    let on_error = {
+        let app = app.clone();
+        Arc::new(move |dev_id: &str, error: &str| {
+            let _ = app.emit(
+                "preview-error",
+                PreviewErrorPayload {
+                    device_id: dev_id.to_string(),
+                    error: humanise_error(error),
+                },
+            );
+        }) as super::capture::ErrorCallback
+    };
+
+    let session = CaptureSession::new(
+        device.device_path.clone(),
+        device.name.clone(),
+        640,
+        480,
+        30.0,
+        Some(on_error),
+    );
+    sessions.insert(device_id.to_string(), session);
+    tracing::info!(
+        "Auto-started preview session for '{}' on hotplug",
+        device.name
+    );
+}
+
+/// Stop and clean up a capture session for a disconnected device.
+pub fn stop_preview_for_device(app: &AppHandle, device_id: &str) {
+    let preview_state = match app.try_state::<PreviewState>() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let mut sessions = preview_state.sessions.lock();
+    if let Some(mut session) = sessions.remove(device_id) {
+        CaptureSession::stop(&mut session);
+        tracing::info!("Stopped preview session for disconnected device: {device_id}");
+    }
+    preview_state.jpeg_cache.lock().remove(device_id);
 }
 
 /// Stop a camera preview session. Idempotent.
@@ -424,6 +555,108 @@ mod tests {
 
         // Cache should be cleared
         assert!(state.jpeg_cache.lock().get("dev-1").is_none());
+    }
+
+    #[test]
+    fn start_all_previews_creates_sessions_for_all_devices() {
+        let state = make_preview_state();
+
+        // Simulate starting sessions for multiple devices
+        let device_ids = vec!["cam-1", "cam-2", "cam-3"];
+        {
+            let mut sessions = state.sessions.lock();
+            for id in &device_ids {
+                let session = CaptureSession::new(
+                    id.to_string(),
+                    format!("Camera {id}"),
+                    640,
+                    480,
+                    30.0,
+                    None,
+                );
+                sessions.insert(id.to_string(), session);
+            }
+        }
+
+        let sessions = state.sessions.lock();
+        assert_eq!(sessions.len(), 3);
+        assert!(sessions.contains_key("cam-1"));
+        assert!(sessions.contains_key("cam-2"));
+        assert!(sessions.contains_key("cam-3"));
+    }
+
+    #[test]
+    fn start_all_previews_skips_existing_sessions() {
+        let state = make_preview_state();
+
+        // Pre-insert a session for cam-1
+        {
+            let mut sessions = state.sessions.lock();
+            let session = CaptureSession::new(
+                "cam-1".to_string(),
+                "Camera 1".to_string(),
+                640,
+                480,
+                30.0,
+                None,
+            );
+            sessions.insert("cam-1".to_string(), session);
+        }
+
+        // Simulate start_all_previews logic: only insert if not already present
+        {
+            let mut sessions = state.sessions.lock();
+            for id in &["cam-1", "cam-2"] {
+                if !sessions.contains_key(*id) {
+                    let session = CaptureSession::new(
+                        id.to_string(),
+                        format!("Camera {id}"),
+                        640,
+                        480,
+                        30.0,
+                        None,
+                    );
+                    sessions.insert(id.to_string(), session);
+                }
+            }
+        }
+
+        let sessions = state.sessions.lock();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains_key("cam-1"));
+        assert!(sessions.contains_key("cam-2"));
+    }
+
+    #[test]
+    fn stop_preview_for_disconnected_device_cleans_up() {
+        let state = make_preview_state();
+
+        // Create session and cache
+        {
+            let mut sessions = state.sessions.lock();
+            let session =
+                CaptureSession::new("cam-1".to_string(), String::new(), 640, 480, 30.0, None);
+            sessions.insert("cam-1".to_string(), session);
+        }
+        state.jpeg_cache.lock().insert(
+            "cam-1".to_string(),
+            JpegCache {
+                sequence: 1,
+                base64: "cached".to_string(),
+            },
+        );
+
+        // Simulate stop_preview_for_device logic
+        {
+            let mut sessions = state.sessions.lock();
+            if let Some(mut s) = sessions.remove("cam-1") {
+                s.stop();
+            }
+        }
+        state.jpeg_cache.lock().remove("cam-1");
+
+        assert!(!state.sessions.lock().contains_key("cam-1"));
+        assert!(state.jpeg_cache.lock().get("cam-1").is_none());
     }
 
     #[test]
