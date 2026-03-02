@@ -148,27 +148,39 @@ unsafe fn read_property_string(bag: &IPropertyBag, name: &str) -> Option<String>
 }
 
 /// COM thread guard — ensures CoInitializeEx/CoUninitialize
-/// pairing.
-struct ComGuard;
+/// pairing. Only calls CoUninitialize on drop when we own the init.
+struct ComGuard {
+    owns_init: bool,
+}
 
 impl ComGuard {
     fn init() -> Result<Self> {
         unsafe {
             let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
             if hr.is_err() {
+                // RPC_E_CHANGED_MODE (0x80010106) means COM is already initialised
+                // with a different apartment type (e.g. STA by Tauri's tao).
+                // DirectShow works in both STA and MTA, so accept the existing
+                // apartment without taking ownership of the init.
+                if hr == windows::core::HRESULT(0x80010106u32 as i32) {
+                    tracing::debug!("COM already initialised as STA, reusing existing apartment");
+                    return Ok(Self { owns_init: false });
+                }
                 return Err(CameraError::ComInit(format!(
                     "CoInitializeEx failed: {hr:?}"
                 )));
             }
         }
-        Ok(Self)
+        Ok(Self { owns_init: true })
     }
 }
 
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
+        if self.owns_init {
+            unsafe {
+                CoUninitialize();
+            }
         }
     }
 }
