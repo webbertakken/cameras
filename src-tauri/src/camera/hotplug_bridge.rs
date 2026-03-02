@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::camera::backend::CameraBackend;
 use crate::camera::commands::CameraState;
 use crate::camera::types::HotplugEvent;
+use crate::preview::commands::{start_preview_for_device, stop_preview_for_device};
 use crate::settings::commands::{apply_saved_settings, SettingsState};
 
 /// Start watching for hotplug events and forward them as Tauri events.
@@ -17,32 +18,41 @@ pub fn start_hotplug_watcher(app_handle: &AppHandle, backend: &dyn CameraBackend
             tracing::warn!("Failed to emit camera-hotplug event: {e}");
         }
 
-        // Auto-apply saved settings when a camera connects
-        if let HotplugEvent::Connected(ref device) = event {
-            let settings_state = handle.try_state::<SettingsState>();
-            let camera_state = handle.try_state::<CameraState>();
+        match &event {
+            HotplugEvent::Connected(ref device) => {
+                // Auto-start capture session for the newly connected camera
+                start_preview_for_device(&handle, device.id.as_str());
 
-            if let (Some(settings), Some(camera)) = (settings_state, camera_state) {
-                let applied = apply_saved_settings(
-                    camera.backend.as_ref(),
-                    &settings.store,
-                    device.id.as_str(),
-                );
-                if !applied.is_empty() {
-                    tracing::info!(
-                        "Auto-applied {} settings for '{}' on hotplug",
-                        applied.len(),
-                        device.name
+                // Auto-apply saved settings
+                let settings_state = handle.try_state::<SettingsState>();
+                let camera_state = handle.try_state::<CameraState>();
+
+                if let (Some(settings), Some(camera)) = (settings_state, camera_state) {
+                    let applied = apply_saved_settings(
+                        camera.backend.as_ref(),
+                        &settings.store,
+                        device.id.as_str(),
                     );
-                    let _ = handle.emit(
-                        "settings-restored",
-                        serde_json::json!({
-                            "deviceId": device.id.as_str(),
-                            "cameraName": device.name,
-                            "controlsApplied": applied.len(),
-                        }),
-                    );
+                    if !applied.is_empty() {
+                        tracing::info!(
+                            "Auto-applied {} settings for '{}' on hotplug",
+                            applied.len(),
+                            device.name
+                        );
+                        let _ = handle.emit(
+                            "settings-restored",
+                            serde_json::json!({
+                                "deviceId": device.id.as_str(),
+                                "cameraName": device.name,
+                                "controlsApplied": applied.len(),
+                            }),
+                        );
+                    }
                 }
+            }
+            HotplugEvent::Disconnected { id } => {
+                // Clean up capture session for the disconnected camera
+                stop_preview_for_device(&handle, id.as_str());
             }
         }
     }));

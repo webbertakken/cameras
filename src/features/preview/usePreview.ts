@@ -7,18 +7,26 @@ interface UsePreviewResult {
   frameSrc: string | null
   isActive: boolean
   error: string | null
-  start: (width: number, height: number, fps: number) => Promise<void>
-  stop: () => Promise<void>
+  /** Start the display loop — reads frames from the already-running backend session. */
+  start: () => void
+  /** Stop the display loop. Does NOT stop the backend capture session. */
+  stop: () => void
 }
 
 /** Maximum consecutive get_frame failures before giving up (~2.5s at 60fps). */
 const MAX_CONSECUTIVE_FAILURES = 150
 
-/** Grace period after starting preview during which failures are ignored (ms).
- *  Matches the backend's 5-second watchdog timeout for DirectShow graph init. */
+/** Grace period after starting the display loop during which failures are
+ *  ignored (ms). Gives the backend time to produce its first frames. */
 const STARTUP_GRACE_MS = 5_000
 
-/** Hook managing the preview lifecycle for a single camera. */
+/**
+ * Hook managing the frame display loop for a single camera.
+ *
+ * Capture sessions are started by the backend at startup and on hotplug.
+ * This hook only drives the frame-fetch rAF loop — it does NOT call
+ * `start_preview` or `stop_preview` IPC commands.
+ */
 export function usePreview(deviceId: string | null): UsePreviewResult {
   const [frameSrc, setFrameSrc] = useState<string | null>(null)
   const [isActive, setIsActive] = useState(false)
@@ -37,91 +45,72 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
     }
   }, [])
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(() => {
     cancelLoop()
     if (prevBlobUrlRef.current) {
       URL.revokeObjectURL(prevBlobUrlRef.current)
       prevBlobUrlRef.current = null
     }
-    if (deviceId) {
-      try {
-        await invoke('stop_preview', { deviceId })
-      } catch {
-        // Idempotent — ignore errors on stop
-      }
-    }
     setIsActive(false)
     setFrameSrc(null)
-  }, [deviceId, cancelLoop])
+  }, [cancelLoop])
 
-  const start = useCallback(
-    async (width: number, height: number, fps: number) => {
-      if (!deviceId) return
+  const start = useCallback(() => {
+    if (!deviceId) return
 
-      // Cancel any existing loop before starting a new one
-      cancelLoop()
-      if (prevBlobUrlRef.current) {
-        URL.revokeObjectURL(prevBlobUrlRef.current)
-        prevBlobUrlRef.current = null
-      }
-      setError(null)
+    // Cancel any existing loop before starting a new one
+    cancelLoop()
+    if (prevBlobUrlRef.current) {
+      URL.revokeObjectURL(prevBlobUrlRef.current)
+      prevBlobUrlRef.current = null
+    }
+    setError(null)
 
+    setIsActive(true)
+    runningRef.current = true
+    failureCountRef.current = 0
+    startTimeRef.current = Date.now()
+
+    const fetchFrame = async () => {
+      if (!runningRef.current) return
       try {
-        await invoke('start_preview', { deviceId, width, height, fps })
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        setError(message)
-        setIsActive(false)
-        return
-      }
-
-      setIsActive(true)
-      runningRef.current = true
-      failureCountRef.current = 0
-      startTimeRef.current = Date.now()
-
-      const fetchFrame = async () => {
-        if (!runningRef.current) return
-        try {
-          const base64 = await invoke<string>('get_frame', { deviceId })
+        const base64 = await invoke<string>('get_frame', { deviceId })
+        failureCountRef.current = 0
+        const raw = atob(base64)
+        const bytes = new Uint8Array(raw.length)
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+        const blob = new Blob([bytes], { type: 'image/jpeg' })
+        const url = URL.createObjectURL(blob)
+        if (prevBlobUrlRef.current) {
+          URL.revokeObjectURL(prevBlobUrlRef.current)
+        }
+        prevBlobUrlRef.current = url
+        setFrameSrc(url)
+      } catch {
+        const elapsed = Date.now() - startTimeRef.current
+        if (elapsed < STARTUP_GRACE_MS) {
+          // During startup grace period, reset the counter so the camera
+          // has time to initialise its capture graph before we give up.
           failureCountRef.current = 0
-          const raw = atob(base64)
-          const bytes = new Uint8Array(raw.length)
-          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
-          const blob = new Blob([bytes], { type: 'image/jpeg' })
-          const url = URL.createObjectURL(blob)
-          if (prevBlobUrlRef.current) {
-            URL.revokeObjectURL(prevBlobUrlRef.current)
+        } else {
+          failureCountRef.current++
+          if (failureCountRef.current >= MAX_CONSECUTIVE_FAILURES) {
+            const msg = 'Preview stopped — camera is not producing frames'
+            setError(msg)
+            setIsActive(false)
+            runningRef.current = false
+            useToastStore.getState().addToast(msg, 'error')
+            return
           }
-          prevBlobUrlRef.current = url
-          setFrameSrc(url)
-        } catch {
-          const elapsed = Date.now() - startTimeRef.current
-          if (elapsed < STARTUP_GRACE_MS) {
-            // During startup grace period, reset the counter so the camera
-            // has time to initialise its capture graph before we give up.
-            failureCountRef.current = 0
-          } else {
-            failureCountRef.current++
-            if (failureCountRef.current >= MAX_CONSECUTIVE_FAILURES) {
-              const msg = 'Preview stopped — camera is not producing frames'
-              setError(msg)
-              setIsActive(false)
-              runningRef.current = false
-              useToastStore.getState().addToast(msg, 'error')
-              return
-            }
-          }
-        }
-        if (runningRef.current) {
-          rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
         }
       }
+      if (runningRef.current) {
+        rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
+      }
+    }
 
-      rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
-    },
-    [deviceId, cancelLoop],
-  )
+    rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
+  }, [deviceId, cancelLoop])
 
   // Listen for preview-error events from the Rust backend
   useEffect(() => {
