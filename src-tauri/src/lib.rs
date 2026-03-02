@@ -232,6 +232,7 @@ pub fn run() {
                             30.0,
                             Some(on_error),
                             gpu.clone(),
+                            75,
                         );
                         sessions.insert(device_id, session);
                         tracing::info!(

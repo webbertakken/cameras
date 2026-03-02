@@ -107,6 +107,7 @@ pub async fn start_preview(
         fps,
         Some(on_error),
         gpu,
+        75,
     );
     sessions.insert(device_id, session);
     Ok(())
@@ -160,6 +161,7 @@ pub async fn start_all_previews(
             30.0,
             Some(on_error),
             gpu.clone(),
+            75,
         );
         sessions.insert(device_id.clone(), session);
         tracing::info!("Auto-started preview session for '{}'", device.name);
@@ -227,6 +229,7 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
         30.0,
         Some(on_error),
         gpu,
+        75,
     );
     sessions.insert(device_id.to_string(), session);
     tracing::info!(
@@ -264,14 +267,63 @@ pub async fn stop_preview(state: State<'_, PreviewState>, device_id: String) -> 
 
 /// Get the latest frame as base64-encoded JPEG.
 ///
-/// Caches the compressed result per device — if the frame timestamp hasn't
-/// changed since the last call, the cached JPEG is returned immediately
-/// without recompressing.
+/// Reads pre-encoded JPEG from the async encode worker's output buffer.
+/// Caches the base64 result per device — if the sequence hasn't changed
+/// since the last call, the cached string is returned immediately.
 #[tauri::command]
 pub async fn get_frame(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
+    let (jpeg_frame, seq) = {
+        let sessions = state.sessions.lock();
+        let session = sessions
+            .get(&device_id)
+            .ok_or_else(|| "no active preview for this device".to_string())?;
+
+        // Try the JPEG buffer first (from the encode worker)
+        if let Some(jpeg_buf) = session.jpeg_buffer() {
+            let seq = jpeg_buf.sequence();
+            if let Some(frame) = jpeg_buf.latest() {
+                (Some(frame), seq)
+            } else {
+                (None, 0)
+            }
+        } else {
+            (None, 0)
+        }
+    };
+
+    // If the encode worker has a JPEG frame, use it directly
+    if let Some(jpeg_frame) = jpeg_frame {
+        // Check cache — return early if the frame hasn't changed
+        {
+            let cache = state.jpeg_cache.lock();
+            if let Some(cached) = cache.get(&device_id) {
+                if cached.sequence == seq {
+                    return Ok(cached.base64.clone());
+                }
+            }
+        }
+
+        let base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &jpeg_frame.jpeg_bytes,
+        );
+
+        let mut cache = state.jpeg_cache.lock();
+        cache.insert(
+            device_id,
+            JpegCache {
+                sequence: seq,
+                base64: base64.clone(),
+            },
+        );
+
+        return Ok(base64);
+    }
+
+    // Fallback: read raw frame and compress on the fly (legacy path)
     let (frame, seq) = {
         let sessions = state.sessions.lock();
         let session = sessions
@@ -285,9 +337,6 @@ pub async fn get_frame(
         (f, buf.sequence())
     };
 
-    // Check cache — return early if the frame hasn't changed.
-    // Uses the monotonic sequence counter rather than the frame's own
-    // timestamp, because some virtual cameras (e.g. OBS) always report 0.
     {
         let cache = state.jpeg_cache.lock();
         if let Some(cached) = cache.get(&device_id) {
@@ -300,17 +349,14 @@ pub async fn get_frame(
     let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 75);
     let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
 
-    // Store in cache
-    {
-        let mut cache = state.jpeg_cache.lock();
-        cache.insert(
-            device_id,
-            JpegCache {
-                sequence: seq,
-                base64: base64.clone(),
-            },
-        );
-    }
+    let mut cache = state.jpeg_cache.lock();
+    cache.insert(
+        device_id,
+        JpegCache {
+            sequence: seq,
+            base64: base64.clone(),
+        },
+    );
 
     Ok(base64)
 }
@@ -423,6 +469,7 @@ mod tests {
                 30.0,
                 None,
                 None,
+                75,
             );
             sessions.insert("test-device".to_string(), session);
         }
@@ -443,6 +490,7 @@ mod tests {
                 30.0,
                 None,
                 None,
+                75,
             );
             sessions.insert("test-device".to_string(), session);
         }
@@ -478,6 +526,7 @@ mod tests {
                 30.0,
                 None,
                 None,
+                75,
             );
             session.buffer().push(frame);
             sessions.insert("test-device".to_string(), session);
@@ -524,8 +573,16 @@ mod tests {
         let state = make_preview_state();
 
         // Insert a session with a frame
-        let session =
-            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
+        let session = CaptureSession::new(
+            "dev-1".to_string(),
+            String::new(),
+            10,
+            10,
+            30.0,
+            None,
+            None,
+            75,
+        );
         session.buffer().push(make_rgb_frame(10, 10));
         let seq = session.buffer().sequence();
         state.sessions.lock().insert("dev-1".to_string(), session);
@@ -566,8 +623,16 @@ mod tests {
         );
 
         // Push a new frame — sequence advances to 2
-        let session =
-            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
+        let session = CaptureSession::new(
+            "dev-1".to_string(),
+            String::new(),
+            10,
+            10,
+            30.0,
+            None,
+            None,
+            75,
+        );
         session.buffer().push(make_rgb_frame(10, 10));
         session.buffer().push(make_rgb_frame(10, 10));
         let new_seq = session.buffer().sequence();
@@ -583,8 +648,16 @@ mod tests {
         let state = make_preview_state();
 
         // Create session and cache entry
-        let session =
-            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
+        let session = CaptureSession::new(
+            "dev-1".to_string(),
+            String::new(),
+            10,
+            10,
+            30.0,
+            None,
+            None,
+            75,
+        );
         state.sessions.lock().insert("dev-1".to_string(), session);
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
@@ -624,6 +697,7 @@ mod tests {
                     30.0,
                     None,
                     None,
+                    75,
                 );
                 sessions.insert(id.to_string(), session);
             }
@@ -651,6 +725,7 @@ mod tests {
                 30.0,
                 None,
                 None,
+                75,
             );
             sessions.insert("cam-1".to_string(), session);
         }
@@ -668,6 +743,7 @@ mod tests {
                         30.0,
                         None,
                         None,
+                        75,
                     );
                     sessions.insert(id.to_string(), session);
                 }
@@ -695,6 +771,7 @@ mod tests {
                 30.0,
                 None,
                 None,
+                75,
             );
             sessions.insert("cam-1".to_string(), session);
         }
@@ -722,8 +799,16 @@ mod tests {
     #[test]
     fn frame_buffer_latest_returns_arc() {
         let state = make_preview_state();
-        let session =
-            CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None, None);
+        let session = CaptureSession::new(
+            "dev-1".to_string(),
+            String::new(),
+            10,
+            10,
+            30.0,
+            None,
+            None,
+            75,
+        );
         session.buffer().push(make_rgb_frame(10, 10));
         state.sessions.lock().insert("dev-1".to_string(), session);
 

@@ -6,6 +6,7 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
+use crate::preview::encode_worker::{EncodeWorker, JpegFrameBuffer, WorkerConfig};
 use crate::preview::gpu::GpuContext;
 
 /// Callback type for reporting capture errors to the frontend.
@@ -95,6 +96,8 @@ pub struct CaptureSession {
     thread: Option<JoinHandle<()>>,
     watchdog: Option<JoinHandle<()>>,
     stats: Arc<Mutex<DiagnosticStats>>,
+    /// Async JPEG encode worker — produces JPEG frames from raw RGB input.
+    encode_worker: Option<EncodeWorker>,
 }
 
 /// Payload emitted via the `preview-error` Tauri event when a capture
@@ -133,12 +136,16 @@ impl CaptureSession {
     /// (Source -> SampleGrabber -> NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
     ///
+    /// An async encode worker thread compresses frames to JPEG in the
+    /// background, storing results in a `JpegFrameBuffer`.
+    ///
     /// If `on_error` is provided, it is called with `(device_id, error_msg)`
     /// when the capture graph fails, allowing the caller to surface errors
     /// to the frontend.
     ///
     /// If `gpu` is provided, colour conversion runs on the GPU; otherwise
     /// the CPU fallback is used.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device_id: String,
         friendly_name: String,
@@ -147,11 +154,18 @@ impl CaptureSession {
         _fps: f32,
         on_error: Option<ErrorCallback>,
         gpu: Option<Arc<GpuContext>>,
+        jpeg_quality: u8,
     ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
+
+        // Spawn the JPEG encode worker
+        let (encode_worker, frame_sender) = EncodeWorker::spawn(WorkerConfig {
+            quality: jpeg_quality,
+            ..WorkerConfig::default()
+        });
 
         // Clone on_error for the watchdog — the capture thread gets the original
         let on_error_wd = on_error.clone();
@@ -179,6 +193,7 @@ impl CaptureSession {
                                 running_clone,
                                 stats_clone,
                                 gpu,
+                                Some(frame_sender),
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
                                 if let Some(cb) = &on_error {
@@ -203,6 +218,7 @@ impl CaptureSession {
                     height,
                     on_error,
                     gpu,
+                    frame_sender,
                 );
                 None
             }
@@ -238,12 +254,21 @@ impl CaptureSession {
             thread,
             watchdog,
             stats,
+            encode_worker: Some(encode_worker),
         }
     }
 
-    /// Get a reference to the frame buffer.
+    /// Get a reference to the raw RGB frame buffer.
     pub fn buffer(&self) -> &Arc<FrameBuffer> {
         &self.buffer
+    }
+
+    /// Get a reference to the JPEG output buffer from the encode worker.
+    ///
+    /// Returns `None` if the encode worker was never started (shouldn't
+    /// happen in normal operation).
+    pub fn jpeg_buffer(&self) -> Option<&Arc<JpegFrameBuffer>> {
+        self.encode_worker.as_ref().map(|w| w.jpeg_buffer())
     }
 
     /// Check if the capture session is currently running.
@@ -352,6 +377,9 @@ impl CaptureSession {
         if let Some(handle) = self.watchdog.take() {
             let _ = handle.join();
         }
+        if let Some(mut worker) = self.encode_worker.take() {
+            worker.stop();
+        }
     }
 }
 
@@ -428,6 +456,7 @@ mod tests {
             30.0,
             None,
             None,
+            75,
         );
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
@@ -443,6 +472,7 @@ mod tests {
             30.0,
             None,
             None,
+            75,
         );
         session.stop();
         session.stop(); // Should not panic
@@ -481,6 +511,7 @@ mod tests {
             30.0,
             Some(on_error),
             None,
+            75,
         );
         // On non-Windows, no capture thread spawns, so callback won't fire
         // but the session should still be valid

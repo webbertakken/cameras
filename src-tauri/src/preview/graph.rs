@@ -232,6 +232,8 @@ pub mod directshow {
         stats: Arc<Mutex<DiagnosticStats>>,
         /// Optional GPU context for hardware-accelerated colour conversion.
         gpu: Option<Arc<GpuContext>>,
+        /// Optional sender for async JPEG encoding via the encode worker.
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     }
 
     static FRAME_CALLBACK_VTBL: ISampleGrabberCBVtbl = ISampleGrabberCBVtbl {
@@ -355,6 +357,17 @@ pub mod directshow {
         let rgb = gpu::convert_frame(data.gpu.as_ref(), format, raw, width, height);
 
         let frame_bytes = rgb.len();
+
+        // Send to the async JPEG encode worker (non-blocking)
+        if let Some(sender) = &data.frame_sender {
+            sender.send(Frame {
+                data: rgb.clone(),
+                width: data.width,
+                height: data.height,
+                timestamp_us,
+            });
+        }
+
         data.buffer.push(Frame {
             data: rgb,
             width: data.width,
@@ -378,6 +391,7 @@ pub mod directshow {
 
     /// Create a new ISampleGrabberCB implementation that pushes frames
     /// into the buffer.
+    #[allow(clippy::too_many_arguments)]
     fn create_frame_callback(
         buffer: Arc<FrameBuffer>,
         width: u32,
@@ -386,6 +400,7 @@ pub mod directshow {
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
         gpu: Option<Arc<GpuContext>>,
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     ) -> *mut core::ffi::c_void {
         let data = Box::new(FrameCallbackData {
             vtbl: &FRAME_CALLBACK_VTBL,
@@ -397,6 +412,7 @@ pub mod directshow {
             running,
             stats,
             gpu,
+            frame_sender,
         });
         Box::into_raw(data) as *mut core::ffi::c_void
     }
@@ -817,6 +833,7 @@ pub mod directshow {
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
         gpu: Option<Arc<GpuContext>>,
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     ) -> Result<(), String> {
         unsafe {
             let _guard = ComGuard::init()?;
@@ -1053,6 +1070,7 @@ pub mod directshow {
                 Arc::clone(&running),
                 stats,
                 gpu,
+                frame_sender,
             );
 
             let hr = grabber.set_callback(callback, 1);
