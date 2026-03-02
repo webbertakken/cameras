@@ -6,7 +6,9 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
-use crate::preview::encode_worker::{EncodeWorker, JpegFrameBuffer, WorkerConfig};
+use crate::preview::encode_worker::{
+    EncodeWorker, EncodingSnapshot, JpegFrameBuffer, WorkerConfig,
+};
 use crate::preview::gpu::GpuContext;
 
 /// Callback type for reporting capture errors to the frontend.
@@ -284,6 +286,13 @@ impl CaptureSession {
     /// Take a snapshot of diagnostic stats for this session.
     pub fn diagnostics(&self) -> DiagnosticSnapshot {
         self.stats.lock().snapshot()
+    }
+
+    /// Take a snapshot of encoding performance stats for this session.
+    ///
+    /// Returns `None` if no encode worker is active.
+    pub fn encoding_snapshot(&self) -> Option<EncodingSnapshot> {
+        self.encode_worker.as_ref().map(|w| w.encoding_snapshot())
     }
 
     /// Watchdog: waits for the graph to start running, then checks that frames

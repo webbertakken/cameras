@@ -61,7 +61,8 @@ pub mod encoder {
         | MFT_ENUM_FLAG_SORTANDFILTER;
 
     /// Which encoder backend is being used.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub enum EncoderKind {
         /// Media Foundation hardware-accelerated JPEG encoder
         MfHardware,
@@ -600,7 +601,8 @@ pub mod encoder {
     use crate::preview::compress;
 
     /// Which encoder backend is being used.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub enum EncoderKind {
         MfHardware,
         MfSoftware,

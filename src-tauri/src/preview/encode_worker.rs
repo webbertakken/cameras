@@ -8,8 +8,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use parking_lot::Mutex;
+use serde::Serialize;
 use tracing::{debug, info, trace, warn};
 
 use crate::preview::capture::Frame;
@@ -63,6 +65,56 @@ impl JpegFrameBuffer {
     }
 }
 
+/// Tracks encoding performance metrics for a single camera session.
+struct EncodingStats {
+    /// Total frames encoded since the worker started.
+    frames_encoded: u64,
+    /// Cumulative encoding time across all frames.
+    total_encode_time_us: u64,
+    /// Duration of the most recent encode operation.
+    last_encode_us: u64,
+}
+
+impl EncodingStats {
+    fn new() -> Self {
+        Self {
+            frames_encoded: 0,
+            total_encode_time_us: 0,
+            last_encode_us: 0,
+        }
+    }
+
+    fn record_encode(&mut self, duration_us: u64) {
+        self.frames_encoded += 1;
+        self.total_encode_time_us += duration_us;
+        self.last_encode_us = duration_us;
+    }
+
+    /// Average encode time per frame in microseconds.
+    fn avg_encode_us(&self) -> f64 {
+        if self.frames_encoded == 0 {
+            return 0.0;
+        }
+        self.total_encode_time_us as f64 / self.frames_encoded as f64
+    }
+}
+
+/// Serialisable snapshot of encoding stats for IPC delivery.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodingSnapshot {
+    /// Which encoder backend is active.
+    pub encoder_kind: EncoderKind,
+    /// Total frames encoded since the worker started.
+    pub frames_encoded: u64,
+    /// Total frames dropped (channel was full).
+    pub frames_dropped: u64,
+    /// Average encode time per frame in milliseconds.
+    pub avg_encode_ms: f64,
+    /// Most recent encode time in milliseconds.
+    pub last_encode_ms: f64,
+}
+
 /// Configuration for the encode worker.
 pub struct WorkerConfig {
     /// JPEG quality (1-100). Default 75.
@@ -88,6 +140,7 @@ impl Default for WorkerConfig {
 #[derive(Clone)]
 pub struct FrameSender {
     tx: mpsc::SyncSender<Frame>,
+    drop_count: Arc<AtomicU64>,
 }
 
 impl FrameSender {
@@ -99,6 +152,7 @@ impl FrameSender {
         match self.tx.try_send(frame) {
             Ok(()) => true,
             Err(mpsc::TrySendError::Full(_)) => {
+                self.drop_count.fetch_add(1, Ordering::Relaxed);
                 trace!("encode worker channel full, dropping frame");
                 false
             }
@@ -122,6 +176,10 @@ pub struct EncodeWorker {
     thread: Option<JoinHandle<()>>,
     /// Which encoder backend the worker is using (set after first encode).
     encoder_kind: Arc<Mutex<EncoderKind>>,
+    /// Encoding performance stats (shared with the worker thread).
+    stats: Arc<Mutex<EncodingStats>>,
+    /// Frame drop counter (shared with FrameSender).
+    drop_count: Arc<AtomicU64>,
 }
 
 impl EncodeWorker {
@@ -134,16 +192,26 @@ impl EncodeWorker {
         let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
         let running = Arc::new(AtomicBool::new(true));
         let encoder_kind = Arc::new(Mutex::new(EncoderKind::CpuFallback));
+        let stats = Arc::new(Mutex::new(EncodingStats::new()));
+        let drop_count = Arc::new(AtomicU64::new(0));
 
         let thread = {
             let jpeg_buffer = Arc::clone(&jpeg_buffer);
             let running = Arc::clone(&running);
             let encoder_kind = Arc::clone(&encoder_kind);
+            let stats = Arc::clone(&stats);
 
             std::thread::Builder::new()
                 .name("encode-worker".to_string())
                 .spawn(move || {
-                    Self::run(rx, &jpeg_buffer, &running, &encoder_kind, config.quality);
+                    Self::run(
+                        rx,
+                        &jpeg_buffer,
+                        &running,
+                        &encoder_kind,
+                        &stats,
+                        config.quality,
+                    );
                 })
                 .expect("failed to spawn encode worker thread")
         };
@@ -153,9 +221,11 @@ impl EncodeWorker {
             running,
             thread: Some(thread),
             encoder_kind,
+            stats,
+            drop_count: Arc::clone(&drop_count),
         };
 
-        let sender = FrameSender { tx };
+        let sender = FrameSender { tx, drop_count };
 
         (worker, sender)
     }
@@ -168,6 +238,18 @@ impl EncodeWorker {
     /// Which encoder backend the worker is using.
     pub fn encoder_kind(&self) -> EncoderKind {
         *self.encoder_kind.lock()
+    }
+
+    /// Take a serialisable snapshot of encoding performance stats.
+    pub fn encoding_snapshot(&self) -> EncodingSnapshot {
+        let stats = self.stats.lock();
+        EncodingSnapshot {
+            encoder_kind: *self.encoder_kind.lock(),
+            frames_encoded: stats.frames_encoded,
+            frames_dropped: self.drop_count.load(Ordering::Relaxed),
+            avg_encode_ms: stats.avg_encode_us() / 1000.0,
+            last_encode_ms: stats.last_encode_us as f64 / 1000.0,
+        }
     }
 
     /// Stop the worker thread. Idempotent.
@@ -184,6 +266,7 @@ impl EncodeWorker {
         jpeg_buffer: &JpegFrameBuffer,
         running: &AtomicBool,
         encoder_kind: &Mutex<EncoderKind>,
+        stats: &Mutex<EncodingStats>,
         quality: u8,
     ) {
         info!("encode worker started (quality={quality})");
@@ -257,8 +340,12 @@ impl EncodeWorker {
                 let _ = &mf_encoder; // suppress unused warning
             }
 
-            // Encode the frame
+            // Encode the frame with timing
+            let t0 = Instant::now();
             let (jpeg_bytes, kind) = encode_frame(&frame, &mf_encoder, quality);
+            let encode_us = t0.elapsed().as_micros() as u64;
+
+            stats.lock().record_encode(encode_us);
 
             jpeg_buffer.update(JpegFrame {
                 jpeg_bytes,
@@ -412,17 +499,24 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &b));
     }
 
+    fn make_sender(tx: mpsc::SyncSender<Frame>) -> FrameSender {
+        FrameSender {
+            tx,
+            drop_count: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
     #[test]
     fn frame_sender_send_returns_true_when_space() {
         let (tx, _rx) = mpsc::sync_channel::<Frame>(2);
-        let sender = FrameSender { tx };
+        let sender = make_sender(tx);
         assert!(sender.send(make_frame(10, 10, 128)));
     }
 
     #[test]
     fn frame_sender_send_returns_false_when_full() {
         let (tx, _rx) = mpsc::sync_channel::<Frame>(1);
-        let sender = FrameSender { tx };
+        let sender = make_sender(tx);
         assert!(sender.send(make_frame(10, 10, 1)));
         // Channel is full — second send should return false
         assert!(!sender.send(make_frame(10, 10, 2)));
@@ -431,9 +525,20 @@ mod tests {
     #[test]
     fn frame_sender_send_returns_false_when_disconnected() {
         let (tx, rx) = mpsc::sync_channel::<Frame>(2);
-        let sender = FrameSender { tx };
+        let sender = make_sender(tx);
         drop(rx);
         assert!(!sender.send(make_frame(10, 10, 128)));
+    }
+
+    #[test]
+    fn frame_sender_tracks_drop_count() {
+        let (tx, _rx) = mpsc::sync_channel::<Frame>(1);
+        let sender = make_sender(tx);
+        assert!(sender.send(make_frame(10, 10, 1)));
+        // Channel is full — drop counter should increment
+        assert!(!sender.send(make_frame(10, 10, 2)));
+        assert!(!sender.send(make_frame(10, 10, 3)));
+        assert_eq!(sender.drop_count.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -527,5 +632,68 @@ mod tests {
         let config = WorkerConfig::default();
         assert_eq!(config.quality, 75);
         assert_eq!(config.channel_capacity, 2);
+    }
+
+    #[test]
+    fn encoding_stats_records_encode_time() {
+        let mut stats = EncodingStats::new();
+        assert_eq!(stats.frames_encoded, 0);
+        assert_eq!(stats.avg_encode_us(), 0.0);
+
+        stats.record_encode(1000);
+        stats.record_encode(3000);
+        assert_eq!(stats.frames_encoded, 2);
+        assert_eq!(stats.last_encode_us, 3000);
+        assert!((stats.avg_encode_us() - 2000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn encoding_snapshot_serialises_to_camel_case() {
+        let snap = EncodingSnapshot {
+            encoder_kind: EncoderKind::CpuFallback,
+            frames_encoded: 100,
+            frames_dropped: 5,
+            avg_encode_ms: 1.5,
+            last_encode_ms: 1.2,
+        };
+        let json = serde_json::to_value(&snap).unwrap();
+        assert!(json["encoderKind"].is_string());
+        assert_eq!(json["framesEncoded"], 100);
+        assert_eq!(json["framesDropped"], 5);
+        assert!(json["avgEncodeMs"].is_number());
+        assert!(json["lastEncodeMs"].is_number());
+    }
+
+    #[test]
+    fn encode_worker_snapshot_tracks_frames() {
+        let (mut worker, sender) = EncodeWorker::spawn(WorkerConfig {
+            quality: 75,
+            channel_capacity: 2,
+        });
+
+        // Initial snapshot — no frames yet
+        let snap = worker.encoding_snapshot();
+        assert_eq!(snap.frames_encoded, 0);
+        assert_eq!(snap.frames_dropped, 0);
+
+        // Send a frame and wait for it to be encoded
+        sender.send(make_rgb_frame(32, 32));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while worker.jpeg_buffer().sequence() < 1 {
+            if std::time::Instant::now() > deadline {
+                panic!("encode worker did not produce a frame within 5s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let snap = worker.encoding_snapshot();
+        assert_eq!(snap.frames_encoded, 1);
+        assert!(snap.avg_encode_ms > 0.0, "encode time should be positive");
+        assert!(
+            snap.last_encode_ms > 0.0,
+            "last encode time should be positive"
+        );
+
+        worker.stop();
     }
 }

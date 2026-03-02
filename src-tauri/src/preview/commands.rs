@@ -11,6 +11,7 @@ use crate::camera::commands::CameraState;
 use crate::camera::error::humanise_error;
 use crate::camera::types::{CameraDevice, DeviceId};
 use crate::diagnostics::stats::DiagnosticSnapshot;
+use crate::preview::encode_worker::EncodingSnapshot;
 
 /// Cached JPEG result for a single device, keyed by frame sequence number.
 struct JpegCache {
@@ -398,6 +399,24 @@ pub async fn get_diagnostics(
         .ok_or_else(|| "no active preview for this device".to_string())?;
 
     Ok(session.diagnostics())
+}
+
+/// Get encoding performance stats for a camera preview session.
+///
+/// Returns encoder type (hardware/software/CPU), frame counts, and timing.
+#[tauri::command]
+pub async fn get_encoding_stats(
+    state: State<'_, PreviewState>,
+    device_id: String,
+) -> Result<EncodingSnapshot, String> {
+    let sessions = state.sessions.lock();
+    let session = sessions
+        .get(&device_id)
+        .ok_or_else(|| "no active preview for this device".to_string())?;
+
+    session
+        .encoding_snapshot()
+        .ok_or_else(|| "encode worker not active for this device".to_string())
 }
 
 /// List all available GPU adapters on the system.

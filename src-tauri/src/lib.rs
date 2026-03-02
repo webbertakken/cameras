@@ -21,8 +21,9 @@ use camera::commands::{
 };
 use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{
-    get_active_gpu, get_diagnostics, get_frame, get_thumbnail, list_gpu_adapters, set_gpu_adapter,
-    start_all_previews, start_preview, stop_preview, PreviewState,
+    get_active_gpu, get_diagnostics, get_encoding_stats, get_frame, get_thumbnail,
+    list_gpu_adapters, set_gpu_adapter, start_all_previews, start_preview, stop_preview,
+    PreviewState,
 };
 use preview::gpu::GpuState;
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
@@ -149,6 +150,7 @@ pub fn run() {
             get_frame,
             get_thumbnail,
             get_diagnostics,
+            get_encoding_stats,
             reset_to_defaults,
             get_saved_settings,
             list_gpu_adapters,
