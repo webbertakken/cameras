@@ -51,6 +51,12 @@ describe('useCameraStore', () => {
     expect(useCameraStore.getState().cameras).toEqual([cam1, cam2])
   })
 
+  it('ignores duplicate device in addCamera', () => {
+    useCameraStore.getState().setCameras([cam1])
+    useCameraStore.getState().addCamera(cam1)
+    expect(useCameraStore.getState().cameras).toEqual([cam1])
+  })
+
   it('removes a device by id via removeCamera', () => {
     useCameraStore.getState().setCameras([cam1, cam2])
     useCameraStore.getState().removeCamera('cam-1')
