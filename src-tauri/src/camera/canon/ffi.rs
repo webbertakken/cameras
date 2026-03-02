@@ -12,8 +12,14 @@ use super::types::{
 };
 
 /// State event handler callback type.
-pub type EdsStateEventHandler =
-    unsafe extern "C" fn(event: EdsStateEvent, parameter: u32, context: *mut std::ffi::c_void);
+///
+/// Must return `EDS_ERR_OK` on success, matching the C typedef:
+/// `EdsError (EDSCALLBACK *EdsStateEventHandler)(EdsStateEvent, EdsUInt32, EdsVoid*)`.
+pub type EdsStateEventHandler = unsafe extern "C" fn(
+    event: EdsStateEvent,
+    parameter: u32,
+    context: *mut std::ffi::c_void,
+) -> EdsError;
 
 #[link(name = "EDSDK")]
 extern "C" {
@@ -32,7 +38,7 @@ extern "C" {
     /// Get a child (camera) at a specific index.
     pub fn EdsGetChildAtIndex(
         ref_: EdsCameraListRef,
-        index: u32,
+        index: i32,
         child: *mut EdsCameraRef,
     ) -> EdsError;
 

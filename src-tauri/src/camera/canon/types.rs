@@ -33,16 +33,19 @@ pub type EdsStateEvent = u32;
 pub type EdsCameraCommand = u32;
 
 /// Device information returned by `EdsGetDeviceInfo`.
+///
+/// Layout matches the C struct `tagEdsDeviceInfo` from EDSDKTypes.h.
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct EdsDeviceInfo {
-    /// Model name (null-terminated).
+    /// Port name (null-terminated, e.g. "\\.\USB001").
+    pub port_name: [u8; 256],
+    /// Device description / model name (null-terminated, e.g. "Canon EOS R5").
     pub device_description: [u8; 256],
-    /// Serial number (null-terminated, may be empty).
-    pub body_id_ex: [u8; 256],
-    /// Reserved fields.
-    pub reserved1: u32,
-    pub reserved2: u32,
+    /// Device sub-type identifier.
+    pub device_sub_type: u32,
+    /// Reserved by Canon SDK.
+    pub reserved: u32,
 }
 
 impl EdsDeviceInfo {
@@ -51,14 +54,9 @@ impl EdsDeviceInfo {
         read_c_string(&self.device_description)
     }
 
-    /// Extract the serial number as a Rust string. Returns `None` if empty.
-    pub fn serial_number(&self) -> Option<String> {
-        let s = read_c_string(&self.body_id_ex);
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+    /// Extract the port name as a Rust string.
+    pub fn port_name(&self) -> String {
+        read_c_string(&self.port_name)
     }
 }
 
@@ -182,10 +180,10 @@ mod tests {
     #[test]
     fn eds_device_info_model_name_reads_c_string() {
         let mut info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
         let name = b"Canon EOS R5";
         info.device_description[..name.len()].copy_from_slice(name);
@@ -194,28 +192,29 @@ mod tests {
     }
 
     #[test]
-    fn eds_device_info_serial_number_reads_c_string() {
+    fn eds_device_info_port_name_reads_c_string() {
         let mut info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
-        let serial = b"0123456789";
-        info.body_id_ex[..serial.len()].copy_from_slice(serial);
+        let port = b"\\\\.\\USB001";
+        info.port_name[..port.len()].copy_from_slice(port);
 
-        assert_eq!(info.serial_number(), Some("0123456789".to_string()));
+        assert_eq!(info.port_name(), "\\\\.\\USB001");
     }
 
     #[test]
-    fn eds_device_info_empty_serial_returns_none() {
+    fn eds_device_info_empty_fields_return_empty_strings() {
         let info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
-        assert_eq!(info.serial_number(), None);
+        assert_eq!(info.model_name(), "");
+        assert_eq!(info.port_name(), "");
     }
 
     #[test]

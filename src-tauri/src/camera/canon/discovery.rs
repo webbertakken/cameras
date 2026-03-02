@@ -1,7 +1,7 @@
 //! Canon camera enumeration via EDSDK.
 //!
 //! Discovers connected Canon cameras and maps them to `CameraDevice`
-//! instances with `canon:<serial>` device IDs.
+//! instances with `canon:<port>` device IDs.
 
 use crate::camera::error::Result;
 use crate::camera::types::{CameraDevice, DeviceId};
@@ -20,7 +20,13 @@ pub fn discover_cameras<S: EdsSdkApi>(sdk: &S) -> Result<Vec<(CameraHandle, Came
         match sdk.get_device_info(handle) {
             Ok(info) => {
                 let model = info.model_name();
-                let device_id = make_device_id(&model, info.serial_number().as_deref());
+                let port = info.port_name();
+                let port_ref = if port.is_empty() {
+                    None
+                } else {
+                    Some(port.as_str())
+                };
+                let device_id = make_device_id(&model, port_ref);
 
                 devices.push((
                     handle,
@@ -46,7 +52,7 @@ pub fn discover_cameras<S: EdsSdkApi>(sdk: &S) -> Result<Vec<(CameraHandle, Came
 
 /// Create a stable device ID for a Canon camera.
 ///
-/// Uses `canon:<serial>` when a serial number is available, otherwise
+/// Uses `canon:<port>` when a port name is available, otherwise
 /// falls back to `canon:<model_hash>`.
 fn make_device_id(model: &str, serial: Option<&str>) -> DeviceId {
     match serial {
