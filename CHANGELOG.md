@@ -10,6 +10,8 @@
 - Fix React strict mode double-mount killing preview (#14)
 
 ### Changed
+- Implement hotplug fix based on investigation findings (#61)
+- Investigate hotplug root cause — COM threading, HWND_MESSAGE, and WM_DEVICECHANGE delivery (#60)
 
 - Create DEVELOPMENT.md with dev setup and EDSDK instructions (#56)
 - End-to-end smoke test with MockEdsSdk (#46)
