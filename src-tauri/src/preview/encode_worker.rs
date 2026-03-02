@@ -290,6 +290,7 @@ impl EncodeWorker {
         let mf_encoder = None::<()>;
 
         // Will be initialised on the first frame (we need width/height)
+        #[allow(unused_mut)]
         let mut mf_encoder = mf_encoder;
         let mut encoder_initialised = false;
 
