@@ -36,6 +36,8 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
   const prevBlobUrlRef = useRef<string | null>(null)
   const failureCountRef = useRef(0)
   const startTimeRef = useRef(0)
+  /** Incremented on each start() call so stale fetch loops self-terminate. */
+  const generationRef = useRef(0)
 
   const cancelLoop = useCallback(() => {
     runningRef.current = false
@@ -70,11 +72,15 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
     runningRef.current = true
     failureCountRef.current = 0
     startTimeRef.current = Date.now()
+    const gen = ++generationRef.current
 
     const fetchFrame = async () => {
-      if (!runningRef.current) return
+      if (!runningRef.current || gen !== generationRef.current) return
       try {
         const base64 = await invoke<string>('get_frame', { deviceId })
+        // After the await, check generation again — a newer start() may have
+        // been called while this request was in-flight.
+        if (gen !== generationRef.current) return
         failureCountRef.current = 0
         const raw = atob(base64)
         const bytes = new Uint8Array(raw.length)
@@ -87,6 +93,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
         prevBlobUrlRef.current = url
         setFrameSrc(url)
       } catch {
+        if (gen !== generationRef.current) return
         const elapsed = Date.now() - startTimeRef.current
         if (elapsed < STARTUP_GRACE_MS) {
           // During startup grace period, reset the counter so the camera
@@ -104,7 +111,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
           }
         }
       }
-      if (runningRef.current) {
+      if (runningRef.current && gen === generationRef.current) {
         rafIdRef.current = requestAnimationFrame(() => void fetchFrame())
       }
     }

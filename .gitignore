@@ -29,6 +29,7 @@ Thumbs.db
 # Claude Code
 .claude/
 PROMPT.md
+AMBIGUITIES.md
 
 # Chainlink
 .chainlink/
@@ -43,3 +44,4 @@ PROMPT.md
 !.yarn/sdks
 !.yarn/versions
 .pnp.*
+CHANGELOG.md

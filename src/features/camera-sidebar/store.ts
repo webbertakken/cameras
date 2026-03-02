@@ -19,7 +19,12 @@ export const useCameraStore = create<CameraStore>((set, get) => ({
 
   selectCamera: (id) => set({ selectedId: id }),
 
-  addCamera: (device) => set((state) => ({ cameras: [...state.cameras, device] })),
+  addCamera: (device) =>
+    set((state) =>
+      state.cameras.some((c) => c.id === device.id)
+        ? state
+        : { cameras: [...state.cameras, device] },
+    ),
 
   removeCamera: (id) =>
     set((state) => {
