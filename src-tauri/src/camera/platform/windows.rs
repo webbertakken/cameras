@@ -148,27 +148,39 @@ unsafe fn read_property_string(bag: &IPropertyBag, name: &str) -> Option<String>
 }
 
 /// COM thread guard — ensures CoInitializeEx/CoUninitialize
-/// pairing.
-struct ComGuard;
+/// pairing. Only calls CoUninitialize on drop when we own the init.
+struct ComGuard {
+    owns_init: bool,
+}
 
 impl ComGuard {
     fn init() -> Result<Self> {
         unsafe {
             let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
             if hr.is_err() {
+                // RPC_E_CHANGED_MODE (0x80010106) means COM is already initialised
+                // with a different apartment type (e.g. STA by Tauri's tao).
+                // DirectShow works in both STA and MTA, so accept the existing
+                // apartment without taking ownership of the init.
+                if hr == windows::core::HRESULT(0x80010106u32 as i32) {
+                    tracing::debug!("COM already initialised as STA, reusing existing apartment");
+                    return Ok(Self { owns_init: false });
+                }
                 return Err(CameraError::ComInit(format!(
                     "CoInitializeEx failed: {hr:?}"
                 )));
             }
         }
-        Ok(Self)
+        Ok(Self { owns_init: true })
     }
 }
 
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
+        if self.owns_init {
+            unsafe {
+                CoUninitialize();
+            }
         }
     }
 }
@@ -795,11 +807,45 @@ fn fourcc_to_string(guid: GUID) -> String {
     }
 }
 
+/// Well-known WM_DEVICECHANGE wparam values.
+const DBT_DEVNODES_CHANGED: usize = 0x0007;
+const DBT_DEVICEARRIVAL: usize = 0x8000;
+const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
+
+/// Minimum interval between re-enumerations triggered by DBT_DEVNODES_CHANGED,
+/// to avoid excessive COM calls when the system fires rapid bursts.
+const DEVNODES_DEBOUNCE_MS: u128 = 500;
+
+/// Classify a WM_DEVICECHANGE wparam for logging.
+fn describe_device_change(wparam: usize) -> &'static str {
+    match wparam {
+        DBT_DEVNODES_CHANGED => "DBT_DEVNODES_CHANGED",
+        DBT_DEVICEARRIVAL => "DBT_DEVICEARRIVAL",
+        DBT_DEVICEREMOVECOMPLETE => "DBT_DEVICEREMOVECOMPLETE",
+        0x8001 => "DBT_DEVICEQUERYREMOVE",
+        0x8002 => "DBT_DEVICEQUERYREMOVEFAILED",
+        0x8003 => "DBT_DEVICEREMOVEPENDING",
+        0x8006 => "DBT_CUSTOMEVENT",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Return `true` when `wparam` should trigger a device re-enumeration.
+fn should_reenumerate(wparam: usize) -> bool {
+    matches!(
+        wparam,
+        DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE | DBT_DEVNODES_CHANGED
+    )
+}
+
 /// Context passed to the hotplug window procedure via GWLP_USERDATA.
 struct HotplugContext {
     known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
     filter_cache: Arc<Mutex<HashMap<String, SendFilter>>>,
     callback: Box<dyn Fn(HotplugEvent) + Send>,
+    /// Timestamp of the last re-enumeration triggered by DBT_DEVNODES_CHANGED,
+    /// used for debouncing rapid-fire broadcasts.
+    last_devnodes_change: Mutex<std::time::Instant>,
 }
 
 /// Diff known devices against a fresh enumeration, returning events for
@@ -828,7 +874,24 @@ fn diff_devices(
 }
 
 /// Re-enumerate devices and fire hotplug events for any changes.
-fn handle_device_change(ctx: &HotplugContext) {
+///
+/// When triggered by `DBT_DEVNODES_CHANGED` the call is debounced so that
+/// rapid-fire broadcasts (common during USB enumeration) don't cause a
+/// storm of COM enumerations.
+fn handle_device_change(ctx: &HotplugContext, wparam: usize) {
+    if wparam == DBT_DEVNODES_CHANGED {
+        let mut last = ctx.last_devnodes_change.lock().unwrap();
+        let elapsed = last.elapsed().as_millis();
+        if elapsed < DEVNODES_DEBOUNCE_MS {
+            debug!(
+                "debounced DBT_DEVNODES_CHANGED ({}ms since last re-enum)",
+                elapsed
+            );
+            return;
+        }
+        *last = std::time::Instant::now();
+    }
+
     let current_raw = match unsafe { enumerate_directshow_devices() } {
         Ok(devs) => devs,
         Err(e) => {
@@ -868,17 +931,70 @@ fn handle_device_change(ctx: &HotplugContext) {
     }
 }
 
+/// KSCATEGORY_VIDEO_CAMERA — cameras that produce colour video.
+const KSCATEGORY_VIDEO_CAMERA: GUID = GUID::from_values(
+    0xe5323777,
+    0xf976,
+    0x4f5b,
+    [0x9b, 0x55, 0xb9, 0x46, 0x99, 0xc4, 0x6e, 0x44],
+);
+
+/// KSCATEGORY_CAPTURE — generic capture devices (some cameras register here
+/// instead of, or in addition to, KSCATEGORY_VIDEO_CAMERA).
+const KSCATEGORY_CAPTURE: GUID = GUID::from_values(
+    0x65e8773d,
+    0x8f56,
+    0x11d0,
+    [0xa3, 0xb9, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96],
+);
+
+/// Register for device-interface notifications for a single GUID class.
+///
+/// # Safety
+/// Calls Win32 `RegisterDeviceNotificationW`.
+unsafe fn register_device_class(hwnd: windows::Win32::Foundation::HWND, guid: GUID) -> Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        RegisterDeviceNotificationW, DEV_BROADCAST_DEVICEINTERFACE_W, REGISTER_NOTIFICATION_FLAGS,
+    };
+
+    let filter = DEV_BROADCAST_DEVICEINTERFACE_W {
+        dbcc_size: std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
+        dbcc_devicetype: 5u32, // DBT_DEVTYP_DEVICEINTERFACE
+        dbcc_classguid: guid,
+        ..Default::default()
+    };
+
+    // DEVICE_NOTIFY_WINDOW_HANDLE = 0x0 — send targeted notifications to hwnd.
+    // We intentionally do NOT use DEVICE_NOTIFY_ALL_INTERFACE_CLASSES (0x4)
+    // so the GUID filter is honoured and we receive targeted DBT_DEVICEARRIVAL /
+    // DBT_DEVICEREMOVECOMPLETE messages for camera devices specifically.
+    let _notification = RegisterDeviceNotificationW(
+        windows::Win32::Foundation::HANDLE(hwnd.0 as _),
+        std::ptr::addr_of!(filter).cast(),
+        REGISTER_NOTIFICATION_FLAGS(0x00000000),
+    )
+    .map_err(|e| CameraError::Hotplug(format!("RegisterDeviceNotificationW failed: {e}")))?;
+
+    Ok(())
+}
+
 /// Run the hot-plug detection message loop.
+///
+/// Creates a hidden (zero-size, off-screen) window instead of a message-only
+/// window (`HWND_MESSAGE`) so that it can receive both **targeted** device
+/// notifications (`DBT_DEVICEARRIVAL`, `DBT_DEVICEREMOVECOMPLETE`) and
+/// **broadcast** messages (`DBT_DEVNODES_CHANGED`). Message-only windows
+/// are excluded from broadcast delivery, which caused newly connected USB
+/// cameras to go undetected.
 fn run_hotplug_loop(
     known_devices: Arc<Mutex<HashMap<String, CameraDevice>>>,
     filter_cache: Arc<Mutex<HashMap<String, SendFilter>>>,
     callback: Box<dyn Fn(HotplugEvent) + Send>,
 ) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
-        RegisterDeviceNotificationW, SetWindowLongPtrW, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-        DEV_BROADCAST_DEVICEINTERFACE_W, GWLP_USERDATA, HWND_MESSAGE, MSG,
-        REGISTER_NOTIFICATION_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW, SetWindowLongPtrW,
+        TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, MSG, WINDOW_EX_STYLE,
+        WINDOW_STYLE, WNDCLASSW,
     };
 
     unsafe {
@@ -894,6 +1010,8 @@ fn run_hotplug_loop(
 
         RegisterClassW(&wc);
 
+        // Hidden window (no parent) — receives both targeted device
+        // notifications and broadcast WM_DEVICECHANGE messages.
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
@@ -903,47 +1021,37 @@ fn run_hotplug_loop(
             0,
             0,
             0,
-            Some(HWND_MESSAGE),
+            None,
             None,
             None,
             None,
         )
         .map_err(|e| CameraError::Hotplug(format!("CreateWindowExW failed: {e}")))?;
 
-        // Store context on the HWND so wnd_proc can access it
+        // Store context on the HWND so wnd_proc can access it.
+        // Initialise last_devnodes_change far enough in the past so the
+        // first DBT_DEVNODES_CHANGED is never debounced.
         let ctx = Box::new(HotplugContext {
             known_devices,
             filter_cache,
             callback,
+            last_devnodes_change: Mutex::new(
+                std::time::Instant::now() - std::time::Duration::from_secs(10),
+            ),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(ctx) as isize);
 
-        // KSCATEGORY_VIDEO_CAMERA GUID
-        let guid = GUID::from_values(
-            0xe5323777,
-            0xf976,
-            0x4f5b,
-            [0x9b, 0x55, 0xb9, 0x46, 0x99, 0xc4, 0x6e, 0x44],
-        );
+        // Register for targeted notifications on both camera categories
+        // so we catch devices regardless of which GUID class they expose.
+        register_device_class(hwnd, KSCATEGORY_VIDEO_CAMERA)?;
+        register_device_class(hwnd, KSCATEGORY_CAPTURE)?;
 
-        let filter = DEV_BROADCAST_DEVICEINTERFACE_W {
-            dbcc_size: std::mem::size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
-            dbcc_devicetype: 5u32, // DBT_DEVTYP_DEVICEINTERFACE
-            dbcc_classguid: guid,
-            ..Default::default()
-        };
-
-        let _notification = RegisterDeviceNotificationW(
-            windows::Win32::Foundation::HANDLE(hwnd.0 as _),
-            std::ptr::addr_of!(filter).cast(),
-            REGISTER_NOTIFICATION_FLAGS(0x00000004),
-        )
-        .map_err(|e| CameraError::Hotplug(format!("RegisterDeviceNotificationW failed: {e}")))?;
-
-        info!("Hot-plug detection started");
+        info!("Hot-plug detection started (hidden window, dual GUID registration)");
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, Some(hwnd), 0, 0).as_bool() {
+        // Pass `None` for the hwnd filter so we also receive broadcast
+        // messages (DBT_DEVNODES_CHANGED) posted to the thread queue.
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -963,12 +1071,21 @@ unsafe extern "system" fn hotplug_wnd_proc(
         DefWindowProcW, GetWindowLongPtrW, GWLP_USERDATA, WM_DEVICECHANGE,
     };
 
-    // DBT_DEVICEARRIVAL = 0x8000, DBT_DEVICEREMOVECOMPLETE = 0x8004
-    if msg == WM_DEVICECHANGE && (wparam.0 == 0x8000 || wparam.0 == 0x8004) {
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-        if ptr != 0 {
-            let ctx = &*(ptr as *const HotplugContext);
-            handle_device_change(ctx);
+    if msg == WM_DEVICECHANGE {
+        let wparam_val = wparam.0;
+        let should_handle = should_reenumerate(wparam_val);
+
+        if should_handle {
+            info!(
+                "WM_DEVICECHANGE: {} (0x{:04X})",
+                describe_device_change(wparam_val),
+                wparam_val
+            );
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+            if ptr != 0 {
+                let ctx = &*(ptr as *const HotplugContext);
+                handle_device_change(ctx, wparam_val);
+            }
         }
     }
 
@@ -1206,6 +1323,101 @@ mod tests {
 
         assert!(desc.flags.supports_auto);
         assert!(desc.flags.is_auto_enabled);
+    }
+
+    #[test]
+    fn diff_devices_fires_connected_event_for_new_device() {
+        // When a new device is added to the current list (but not in known),
+        // a Connected event should be fired.
+        use std::collections::HashMap;
+
+        let mut known = HashMap::new();
+        let device = CameraDevice {
+            id: DeviceId::new("test:new"),
+            name: "New Camera".to_string(),
+            device_path: "/dev/video0".to_string(),
+            is_connected: true,
+        };
+
+        let mut current = HashMap::new();
+        current.insert(device.id.as_str().to_string(), device.clone());
+
+        let events = diff_devices(&mut known, current);
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            HotplugEvent::Connected(dev) => {
+                assert_eq!(dev.id, device.id);
+                assert_eq!(dev.name, device.name);
+            }
+            _ => panic!("expected Connected event"),
+        }
+    }
+
+    // --- describe_device_change tests ---
+
+    #[test]
+    fn describe_device_change_labels_devnodes_changed() {
+        assert_eq!(describe_device_change(0x0007), "DBT_DEVNODES_CHANGED");
+    }
+
+    #[test]
+    fn describe_device_change_labels_device_arrival() {
+        assert_eq!(describe_device_change(0x8000), "DBT_DEVICEARRIVAL");
+    }
+
+    #[test]
+    fn describe_device_change_labels_device_remove_complete() {
+        assert_eq!(describe_device_change(0x8004), "DBT_DEVICEREMOVECOMPLETE");
+    }
+
+    #[test]
+    fn describe_device_change_labels_unknown_wparam() {
+        assert_eq!(describe_device_change(0xFFFF), "UNKNOWN");
+    }
+
+    // --- should_reenumerate tests ---
+
+    #[test]
+    fn should_reenumerate_on_device_arrival() {
+        assert!(should_reenumerate(DBT_DEVICEARRIVAL));
+    }
+
+    #[test]
+    fn should_reenumerate_on_device_remove_complete() {
+        assert!(should_reenumerate(DBT_DEVICEREMOVECOMPLETE));
+    }
+
+    #[test]
+    fn should_reenumerate_on_devnodes_changed() {
+        assert!(should_reenumerate(DBT_DEVNODES_CHANGED));
+    }
+
+    #[test]
+    fn should_not_reenumerate_on_query_remove() {
+        assert!(!should_reenumerate(0x8001));
+    }
+
+    #[test]
+    fn should_not_reenumerate_on_custom_event() {
+        assert!(!should_reenumerate(0x8006));
+    }
+
+    #[test]
+    fn should_not_reenumerate_on_unknown_wparam() {
+        assert!(!should_reenumerate(0xDEAD));
+    }
+
+    // --- GUID constant tests ---
+
+    #[test]
+    fn kscategory_video_camera_guid_matches_expected() {
+        assert_eq!(KSCATEGORY_VIDEO_CAMERA.data1, 0xe5323777);
+    }
+
+    #[test]
+    fn kscategory_capture_guid_matches_expected() {
+        assert_eq!(KSCATEGORY_CAPTURE.data1, 0x65e8773d);
     }
 
     #[test]

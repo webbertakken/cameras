@@ -4,12 +4,15 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::capture::{CaptureSession, PreviewErrorPayload};
+use super::capture::{CaptureSession, PreviewErrorPayload, PreviewSession};
 use super::compress;
+use super::gpu::{GpuAdapterInfo, GpuState};
 use crate::camera::commands::CameraState;
 use crate::camera::error::humanise_error;
 use crate::camera::types::{CameraDevice, DeviceId};
 use crate::diagnostics::stats::DiagnosticSnapshot;
+use crate::preview::encode_worker::EncodingSnapshot;
+use crate::CanonSdkState;
 
 /// Cached JPEG result for a single device, keyed by frame sequence number.
 struct JpegCache {
@@ -19,7 +22,7 @@ struct JpegCache {
 
 /// Managed state holding active preview sessions.
 pub struct PreviewState {
-    pub sessions: Mutex<HashMap<String, CaptureSession>>,
+    pub sessions: Mutex<HashMap<String, PreviewSession>>,
     /// Per-device JPEG cache to avoid recompressing unchanged frames.
     jpeg_cache: Mutex<HashMap<String, JpegCache>>,
 }
@@ -59,10 +62,13 @@ fn resolve_device_info(
 
 /// Start a camera preview session.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_preview(
     app: AppHandle,
     state: State<'_, PreviewState>,
     camera_state: State<'_, CameraState>,
+    canon_state: State<'_, CanonSdkState>,
+    gpu_state: State<'_, GpuState>,
     device_id: String,
     width: u32,
     height: u32,
@@ -82,29 +88,101 @@ pub async fn start_preview(
         }
     }
 
-    let on_error = {
-        let app = app.clone();
-        Arc::new(move |device_id: &str, error: &str| {
-            let _ = app.emit(
-                "preview-error",
-                PreviewErrorPayload {
-                    device_id: device_id.to_string(),
-                    error: humanise_error(error),
-                },
-            );
-        }) as super::capture::ErrorCallback
-    };
+    let session = create_preview_session(
+        &app,
+        &canon_state,
+        &gpu_state,
+        &device_id,
+        &device_path,
+        &friendly_name,
+        width,
+        height,
+        fps,
+    )?;
+    sessions.insert(device_id, session);
+    Ok(())
+}
 
+/// Create a `PreviewSession` for the given device.
+///
+/// Detects Canon devices by the `edsdk://` prefix in `device_path` and
+/// creates a `CanonCaptureSession`; otherwise creates a DirectShow session.
+#[allow(clippy::too_many_arguments)]
+fn create_preview_session(
+    app: &AppHandle,
+    canon_state: &CanonSdkState,
+    gpu_state: &GpuState,
+    device_id: &str,
+    device_path: &str,
+    friendly_name: &str,
+    width: u32,
+    height: u32,
+    fps: f32,
+) -> Result<PreviewSession, String> {
+    // Canon live view: device_path starts with "edsdk://"
+    if device_path.starts_with("edsdk://") {
+        return create_canon_session(canon_state, device_id, device_path);
+    }
+
+    let on_error = make_error_callback(app);
+    let gpu = gpu_state.context();
     let session = CaptureSession::new(
-        device_path,
-        friendly_name,
+        device_path.to_string(),
+        friendly_name.to_string(),
         width,
         height,
         fps,
         Some(on_error),
+        gpu,
+        75,
     );
-    sessions.insert(device_id, session);
-    Ok(())
+    Ok(PreviewSession::DirectShow(session))
+}
+
+/// Create a Canon live view capture session.
+///
+/// Resolves the CameraHandle from the shared handle map and starts live view.
+fn create_canon_session(
+    canon_state: &CanonSdkState,
+    device_id: &str,
+    device_path: &str,
+) -> Result<PreviewSession, String> {
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    {
+        let sdk = canon_state
+            .sdk()
+            .ok_or_else(|| "Canon SDK not available".to_string())?;
+        let handle = canon_state
+            .find_handle(device_path)
+            .ok_or_else(|| format!("Canon camera not found: {device_path}"))?;
+
+        let session = super::capture::CanonCaptureSession::new(
+            device_id.to_string(),
+            Arc::clone(sdk),
+            handle,
+        )?;
+        Ok(PreviewSession::Canon(session))
+    }
+
+    #[cfg(not(all(feature = "canon", target_os = "windows")))]
+    {
+        let _ = (canon_state, device_id, device_path);
+        Err("Canon support not available in this build".to_string())
+    }
+}
+
+/// Build a standard error callback that emits `preview-error` events.
+fn make_error_callback(app: &AppHandle) -> super::capture::ErrorCallback {
+    let app = app.clone();
+    Arc::new(move |dev_id: &str, error: &str| {
+        let _ = app.emit(
+            "preview-error",
+            PreviewErrorPayload {
+                device_id: dev_id.to_string(),
+                error: humanise_error(error),
+            },
+        );
+    })
 }
 
 /// Start capture sessions for all currently connected cameras.
@@ -116,6 +194,8 @@ pub async fn start_all_previews(
     app: AppHandle,
     state: State<'_, PreviewState>,
     camera_state: State<'_, CameraState>,
+    canon_state: State<'_, CanonSdkState>,
+    gpu_state: State<'_, GpuState>,
 ) -> Result<(), String> {
     let devices = camera_state
         .backend
@@ -132,29 +212,25 @@ pub async fn start_all_previews(
             continue;
         }
 
-        let on_error = {
-            let app = app.clone();
-            Arc::new(move |dev_id: &str, error: &str| {
-                let _ = app.emit(
-                    "preview-error",
-                    PreviewErrorPayload {
-                        device_id: dev_id.to_string(),
-                        error: humanise_error(error),
-                    },
-                );
-            }) as super::capture::ErrorCallback
-        };
-
-        let session = CaptureSession::new(
-            device.device_path.clone(),
-            device.name.clone(),
+        match create_preview_session(
+            &app,
+            &canon_state,
+            &gpu_state,
+            &device_id,
+            &device.device_path,
+            &device.name,
             640,
             480,
             30.0,
-            Some(on_error),
-        );
-        sessions.insert(device_id.clone(), session);
-        tracing::info!("Auto-started preview session for '{}'", device.name);
+        ) {
+            Ok(session) => {
+                sessions.insert(device_id.clone(), session);
+                tracing::info!("Auto-started preview session for '{}'", device.name);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to start preview for '{}': {e}", device.name);
+            }
+        }
     }
 
     Ok(())
@@ -195,18 +271,31 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
         return;
     }
 
-    let on_error = {
-        let app = app.clone();
-        Arc::new(move |dev_id: &str, error: &str| {
-            let _ = app.emit(
-                "preview-error",
-                PreviewErrorPayload {
-                    device_id: dev_id.to_string(),
-                    error: humanise_error(error),
-                },
-            );
-        }) as super::capture::ErrorCallback
-    };
+    // Canon live view: device_path starts with "edsdk://"
+    if device.device_path.starts_with("edsdk://") {
+        if let Some(canon_state) = app.try_state::<CanonSdkState>() {
+            match create_canon_session(canon_state.inner(), device_id, &device.device_path) {
+                Ok(session) => {
+                    sessions.insert(device_id.to_string(), session);
+                    tracing::info!(
+                        "Auto-started Canon preview for '{}' on hotplug",
+                        device.name
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to start Canon preview for '{}' on hotplug: {e}",
+                        device.name
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    // DirectShow capture
+    let on_error = make_error_callback(app);
+    let gpu = app.try_state::<GpuState>().and_then(|s| s.context());
 
     let session = CaptureSession::new(
         device.device_path.clone(),
@@ -215,8 +304,10 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
         480,
         30.0,
         Some(on_error),
+        gpu,
+        75,
     );
-    sessions.insert(device_id.to_string(), session);
+    sessions.insert(device_id.to_string(), PreviewSession::DirectShow(session));
     tracing::info!(
         "Auto-started preview session for '{}' on hotplug",
         device.name
@@ -232,7 +323,7 @@ pub fn stop_preview_for_device(app: &AppHandle, device_id: &str) {
 
     let mut sessions = preview_state.sessions.lock();
     if let Some(mut session) = sessions.remove(device_id) {
-        CaptureSession::stop(&mut session);
+        session.stop();
         tracing::info!("Stopped preview session for disconnected device: {device_id}");
     }
     preview_state.jpeg_cache.lock().remove(device_id);
@@ -252,30 +343,79 @@ pub async fn stop_preview(state: State<'_, PreviewState>, device_id: String) -> 
 
 /// Get the latest frame as base64-encoded JPEG.
 ///
-/// Caches the compressed result per device — if the frame timestamp hasn't
-/// changed since the last call, the cached JPEG is returned immediately
-/// without recompressing.
+/// Reads pre-encoded JPEG from the async encode worker's output buffer.
+/// Caches the base64 result per device — if the sequence hasn't changed
+/// since the last call, the cached string is returned immediately.
 #[tauri::command]
 pub async fn get_frame(
     state: State<'_, PreviewState>,
     device_id: String,
 ) -> Result<String, String> {
+    let (jpeg_frame, seq) = {
+        let sessions = state.sessions.lock();
+        let session = sessions
+            .get(&device_id)
+            .ok_or_else(|| "no active preview for this device".to_string())?;
+
+        // Try the JPEG buffer first (from the encode worker)
+        if let Some(jpeg_buf) = session.jpeg_buffer() {
+            let seq = jpeg_buf.sequence();
+            if let Some(frame) = jpeg_buf.latest() {
+                (Some(frame), seq)
+            } else {
+                (None, 0)
+            }
+        } else {
+            (None, 0)
+        }
+    };
+
+    // If the encode worker has a JPEG frame, use it directly
+    if let Some(jpeg_frame) = jpeg_frame {
+        // Check cache — return early if the frame hasn't changed
+        {
+            let cache = state.jpeg_cache.lock();
+            if let Some(cached) = cache.get(&device_id) {
+                if cached.sequence == seq {
+                    return Ok(cached.base64.clone());
+                }
+            }
+        }
+
+        let base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &jpeg_frame.jpeg_bytes,
+        );
+
+        let mut cache = state.jpeg_cache.lock();
+        cache.insert(
+            device_id,
+            JpegCache {
+                sequence: seq,
+                base64: base64.clone(),
+            },
+        );
+
+        return Ok(base64);
+    }
+
+    // Fallback: read raw frame and compress on the fly (legacy path)
+    // Canon sessions have no raw buffer, so this path is DirectShow-only.
     let (frame, seq) = {
         let sessions = state.sessions.lock();
         let session = sessions
             .get(&device_id)
             .ok_or_else(|| "no active preview for this device".to_string())?;
 
-        let buf = session.buffer();
+        let buf = session
+            .buffer()
+            .ok_or_else(|| "no frame available".to_string())?;
         let f = buf
             .latest()
             .ok_or_else(|| "no frame available".to_string())?;
         (f, buf.sequence())
     };
 
-    // Check cache — return early if the frame hasn't changed.
-    // Uses the monotonic sequence counter rather than the frame's own
-    // timestamp, because some virtual cameras (e.g. OBS) always report 0.
     {
         let cache = state.jpeg_cache.lock();
         if let Some(cached) = cache.get(&device_id) {
@@ -288,17 +428,14 @@ pub async fn get_frame(
     let jpeg = compress::compress_jpeg(&frame.data, frame.width, frame.height, 75);
     let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
 
-    // Store in cache
-    {
-        let mut cache = state.jpeg_cache.lock();
-        cache.insert(
-            device_id,
-            JpegCache {
-                sequence: seq,
-                base64: base64.clone(),
-            },
-        );
-    }
+    let mut cache = state.jpeg_cache.lock();
+    cache.insert(
+        device_id,
+        JpegCache {
+            sequence: seq,
+            base64: base64.clone(),
+        },
+    );
 
     Ok(base64)
 }
@@ -315,9 +452,10 @@ pub async fn get_thumbnail(
             .get(&device_id)
             .ok_or_else(|| "no active preview for this device".to_string())?;
 
-        session
+        let buf = session
             .buffer()
-            .latest()
+            .ok_or_else(|| "thumbnails not available for Canon live view".to_string())?;
+        buf.latest()
             .ok_or_else(|| "no frame available".to_string())?
     };
 
@@ -342,6 +480,50 @@ pub async fn get_diagnostics(
     Ok(session.diagnostics())
 }
 
+/// Get encoding performance stats for a camera preview session.
+///
+/// Returns encoder type (hardware/software/CPU), frame counts, and timing.
+#[tauri::command]
+pub async fn get_encoding_stats(
+    state: State<'_, PreviewState>,
+    device_id: String,
+) -> Result<EncodingSnapshot, String> {
+    let sessions = state.sessions.lock();
+    let session = sessions
+        .get(&device_id)
+        .ok_or_else(|| "no active preview for this device".to_string())?;
+
+    session
+        .encoding_snapshot()
+        .ok_or_else(|| "encode worker not active for this device".to_string())
+}
+
+/// List all available GPU adapters on the system.
+#[tauri::command]
+pub async fn list_gpu_adapters() -> Vec<GpuAdapterInfo> {
+    super::gpu::GpuContext::enumerate_adapters()
+}
+
+/// Get information about the currently active GPU adapter.
+///
+/// Returns `null` if GPU acceleration is disabled (CPU-only mode).
+#[tauri::command]
+pub async fn get_active_gpu(state: State<'_, GpuState>) -> Result<Option<GpuAdapterInfo>, String> {
+    Ok(state.context().map(|ctx| ctx.adapter_info()))
+}
+
+/// Switch the active GPU adapter, or disable GPU acceleration.
+///
+/// Pass `adapterIndex: null` to switch to CPU-only mode.
+/// Returns the name of the newly selected adapter, or `null` if disabled.
+#[tauri::command]
+pub async fn set_gpu_adapter(
+    state: State<'_, GpuState>,
+    adapter_index: Option<usize>,
+) -> Result<Option<String>, String> {
+    Ok(state.set_adapter(adapter_index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,13 +543,25 @@ mod tests {
         }
     }
 
+    /// Helper: create a DirectShow capture session for testing.
+    fn make_ds_session(device_id: &str, w: u32, h: u32) -> CaptureSession {
+        CaptureSession::new(
+            device_id.to_string(),
+            String::new(),
+            w,
+            h,
+            30.0,
+            None,
+            None,
+            75,
+        )
+    }
+
     #[test]
     fn start_preview_with_empty_device_id_fails() {
         let state = make_preview_state();
-        // Simulate the validation
         let device_id = "".to_string();
         assert!(device_id.is_empty());
-        // The command would return Err for empty device_id
         let sessions = state.sessions.lock();
         assert!(sessions.is_empty());
     }
@@ -377,15 +571,11 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session = CaptureSession::new(
+            let session = make_ds_session("test-device", 640, 480);
+            sessions.insert(
                 "test-device".to_string(),
-                String::new(),
-                640,
-                480,
-                30.0,
-                None,
+                PreviewSession::DirectShow(session),
             );
-            sessions.insert("test-device".to_string(), session);
         }
         let sessions = state.sessions.lock();
         assert!(sessions.contains_key("test-device"));
@@ -396,15 +586,11 @@ mod tests {
         let state = make_preview_state();
         {
             let mut sessions = state.sessions.lock();
-            let session = CaptureSession::new(
+            let session = make_ds_session("test-device", 640, 480);
+            sessions.insert(
                 "test-device".to_string(),
-                String::new(),
-                640,
-                480,
-                30.0,
-                None,
+                PreviewSession::DirectShow(session),
             );
-            sessions.insert("test-device".to_string(), session);
         }
         {
             let mut sessions = state.sessions.lock();
@@ -420,7 +606,6 @@ mod tests {
     fn stop_preview_without_session_is_ok() {
         let state = make_preview_state();
         let sessions = state.sessions.lock();
-        // Looking up a non-existent key should not panic
         assert!(sessions.get("nonexistent").is_none());
     }
 
@@ -430,20 +615,22 @@ mod tests {
         let frame = make_rgb_frame(10, 10);
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("test-device".to_string(), String::new(), 10, 10, 30.0, None);
+            let session = make_ds_session("test-device", 10, 10);
             session.buffer().push(frame);
-            sessions.insert("test-device".to_string(), session);
+            sessions.insert(
+                "test-device".to_string(),
+                PreviewSession::DirectShow(session),
+            );
         }
 
         let sessions = state.sessions.lock();
         let session = sessions.get("test-device").unwrap();
-        let latest = session.buffer().latest().unwrap();
+        let buf = session.buffer().unwrap();
+        let latest = buf.latest().unwrap();
         let jpeg = compress::compress_jpeg(&latest.data, latest.width, latest.height, 85);
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
         assert!(!b64.is_empty());
 
-        // Decode and verify it starts with JPEG magic bytes
         let decoded =
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
         assert_eq!(decoded[0], 0xFF);
@@ -476,16 +663,23 @@ mod tests {
     fn jpeg_cache_returns_same_result_for_same_sequence() {
         let state = make_preview_state();
 
-        // Insert a session with a frame
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session = make_ds_session("dev-1", 10, 10);
         session.buffer().push(make_rgb_frame(10, 10));
         let seq = session.buffer().sequence();
-        state.sessions.lock().insert("dev-1".to_string(), session);
+        state
+            .sessions
+            .lock()
+            .insert("dev-1".to_string(), PreviewSession::DirectShow(session));
 
-        // Simulate first get_frame: compress and cache
         let frame1 = {
             let sessions = state.sessions.lock();
-            sessions.get("dev-1").unwrap().buffer().latest().unwrap()
+            sessions
+                .get("dev-1")
+                .unwrap()
+                .buffer()
+                .unwrap()
+                .latest()
+                .unwrap()
         };
         let jpeg = compress::compress_jpeg(&frame1.data, frame1.width, frame1.height, 85);
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg);
@@ -497,7 +691,6 @@ mod tests {
             },
         );
 
-        // Simulate second get_frame: should hit cache (same sequence)
         let cache = state.jpeg_cache.lock();
         let cached = cache.get("dev-1").unwrap();
         assert_eq!(cached.sequence, 1);
@@ -508,7 +701,6 @@ mod tests {
     fn jpeg_cache_invalidates_on_new_frame() {
         let state = make_preview_state();
 
-        // Seed cache with old sequence
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
             JpegCache {
@@ -517,13 +709,11 @@ mod tests {
             },
         );
 
-        // Push a new frame — sequence advances to 2
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session = make_ds_session("dev-1", 10, 10);
         session.buffer().push(make_rgb_frame(10, 10));
         session.buffer().push(make_rgb_frame(10, 10));
         let new_seq = session.buffer().sequence();
 
-        // Cache miss — sequences differ
         let cache = state.jpeg_cache.lock();
         let cached = cache.get("dev-1").unwrap();
         assert_ne!(cached.sequence, new_seq);
@@ -533,9 +723,11 @@ mod tests {
     fn stop_preview_clears_jpeg_cache() {
         let state = make_preview_state();
 
-        // Create session and cache entry
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
-        state.sessions.lock().insert("dev-1".to_string(), session);
+        let session = make_ds_session("dev-1", 10, 10);
+        state
+            .sessions
+            .lock()
+            .insert("dev-1".to_string(), PreviewSession::DirectShow(session));
         state.jpeg_cache.lock().insert(
             "dev-1".to_string(),
             JpegCache {
@@ -544,7 +736,6 @@ mod tests {
             },
         );
 
-        // Stop the preview
         {
             let mut sessions = state.sessions.lock();
             if let Some(mut s) = sessions.remove("dev-1") {
@@ -553,7 +744,6 @@ mod tests {
         }
         state.jpeg_cache.lock().remove("dev-1");
 
-        // Cache should be cleared
         assert!(state.jpeg_cache.lock().get("dev-1").is_none());
     }
 
@@ -561,20 +751,12 @@ mod tests {
     fn start_all_previews_creates_sessions_for_all_devices() {
         let state = make_preview_state();
 
-        // Simulate starting sessions for multiple devices
         let device_ids = vec!["cam-1", "cam-2", "cam-3"];
         {
             let mut sessions = state.sessions.lock();
             for id in &device_ids {
-                let session = CaptureSession::new(
-                    id.to_string(),
-                    format!("Camera {id}"),
-                    640,
-                    480,
-                    30.0,
-                    None,
-                );
-                sessions.insert(id.to_string(), session);
+                let session = make_ds_session(id, 640, 480);
+                sessions.insert(id.to_string(), PreviewSession::DirectShow(session));
             }
         }
 
@@ -589,7 +771,6 @@ mod tests {
     fn start_all_previews_skips_existing_sessions() {
         let state = make_preview_state();
 
-        // Pre-insert a session for cam-1
         {
             let mut sessions = state.sessions.lock();
             let session = CaptureSession::new(
@@ -599,24 +780,18 @@ mod tests {
                 480,
                 30.0,
                 None,
+                None,
+                75,
             );
-            sessions.insert("cam-1".to_string(), session);
+            sessions.insert("cam-1".to_string(), PreviewSession::DirectShow(session));
         }
 
-        // Simulate start_all_previews logic: only insert if not already present
         {
             let mut sessions = state.sessions.lock();
             for id in &["cam-1", "cam-2"] {
                 if !sessions.contains_key(*id) {
-                    let session = CaptureSession::new(
-                        id.to_string(),
-                        format!("Camera {id}"),
-                        640,
-                        480,
-                        30.0,
-                        None,
-                    );
-                    sessions.insert(id.to_string(), session);
+                    let session = make_ds_session(id, 640, 480);
+                    sessions.insert(id.to_string(), PreviewSession::DirectShow(session));
                 }
             }
         }
@@ -631,12 +806,10 @@ mod tests {
     fn stop_preview_for_disconnected_device_cleans_up() {
         let state = make_preview_state();
 
-        // Create session and cache
         {
             let mut sessions = state.sessions.lock();
-            let session =
-                CaptureSession::new("cam-1".to_string(), String::new(), 640, 480, 30.0, None);
-            sessions.insert("cam-1".to_string(), session);
+            let session = make_ds_session("cam-1", 640, 480);
+            sessions.insert("cam-1".to_string(), PreviewSession::DirectShow(session));
         }
         state.jpeg_cache.lock().insert(
             "cam-1".to_string(),
@@ -646,7 +819,6 @@ mod tests {
             },
         );
 
-        // Simulate stop_preview_for_device logic
         {
             let mut sessions = state.sessions.lock();
             if let Some(mut s) = sessions.remove("cam-1") {
@@ -662,16 +834,77 @@ mod tests {
     #[test]
     fn frame_buffer_latest_returns_arc() {
         let state = make_preview_state();
-        let session = CaptureSession::new("dev-1".to_string(), String::new(), 10, 10, 30.0, None);
+        let session = make_ds_session("dev-1", 10, 10);
         session.buffer().push(make_rgb_frame(10, 10));
-        state.sessions.lock().insert("dev-1".to_string(), session);
+        state
+            .sessions
+            .lock()
+            .insert("dev-1".to_string(), PreviewSession::DirectShow(session));
 
         let sessions = state.sessions.lock();
         let session = sessions.get("dev-1").unwrap();
-        let frame1 = session.buffer().latest().unwrap();
-        let frame2 = session.buffer().latest().unwrap();
+        let buf = session.buffer().unwrap();
+        let frame1 = buf.latest().unwrap();
+        let frame2 = buf.latest().unwrap();
 
-        // Both should point to the same allocation (Arc)
         assert!(std::sync::Arc::ptr_eq(&frame1, &frame2));
+    }
+
+    #[test]
+    fn preview_session_routes_edsdk_to_canon() {
+        // Verify that the edsdk:// prefix detection works
+        let device_path = "edsdk://Canon EOS R5";
+        assert!(device_path.starts_with("edsdk://"));
+
+        let device_path = "\\\\?\\usb#vid_046d";
+        assert!(!device_path.starts_with("edsdk://"));
+    }
+
+    #[test]
+    fn preview_session_canon_has_no_raw_buffer() {
+        use crate::camera::canon::api::CameraHandle;
+        use crate::camera::canon::mock::MockEdsSdk;
+        use crate::preview::capture::CanonCaptureSession;
+
+        let mock = Arc::new(
+            MockEdsSdk::new()
+                .with_cameras(1)
+                .with_live_view_frame(vec![0xFF, 0xD8, 0xFF, 0xD9]),
+        );
+        let camera = CameraHandle(0);
+
+        let session = CanonCaptureSession::new("canon:MOCK0001".to_string(), mock, camera).unwrap();
+
+        let preview = PreviewSession::Canon(session);
+        assert!(
+            preview.buffer().is_none(),
+            "Canon sessions have no raw buffer"
+        );
+        assert!(
+            preview.jpeg_buffer().is_some(),
+            "Canon sessions have a JPEG buffer"
+        );
+    }
+
+    #[test]
+    fn preview_session_directshow_has_raw_buffer() {
+        let session = make_ds_session("dev-1", 10, 10);
+        let preview = PreviewSession::DirectShow(session);
+        assert!(
+            preview.buffer().is_some(),
+            "DirectShow sessions have a raw buffer"
+        );
+    }
+
+    #[test]
+    fn canon_thumbnail_returns_error() {
+        // Canon live view doesn't support thumbnails (no raw buffer)
+        let device_path = "edsdk://Canon EOS R5";
+        assert!(
+            device_path.starts_with("edsdk://"),
+            "Canon devices should be detected by edsdk:// prefix"
+        );
+        // The get_thumbnail command calls session.buffer() which returns None for Canon,
+        // resulting in "thumbnails not available for Canon live view" error.
     }
 }

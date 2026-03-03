@@ -194,20 +194,22 @@ impl EdsSdkApi for MockEdsSdk {
         let cam = state.get_camera(camera)?.clone();
 
         let mut info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
 
+        // Populate device_description (model name)
         let model_bytes = cam.model.as_bytes();
         let len = model_bytes.len().min(255);
         info.device_description[..len].copy_from_slice(&model_bytes[..len]);
 
+        // Use serial as a synthetic port name (for mock identification)
         if let Some(ref serial) = cam.serial {
             let serial_bytes = serial.as_bytes();
             let slen = serial_bytes.len().min(255);
-            info.body_id_ex[..slen].copy_from_slice(&serial_bytes[..slen]);
+            info.port_name[..slen].copy_from_slice(&serial_bytes[..slen]);
         }
 
         Ok(info)
@@ -319,16 +321,16 @@ mod tests {
         let cameras = mock.camera_list().unwrap();
         let info = mock.get_device_info(cameras[0]).unwrap();
         assert_eq!(info.model_name(), "Canon EOS R5");
-        assert_eq!(info.serial_number(), Some("ABC123".to_string()));
+        assert_eq!(info.port_name(), "ABC123");
     }
 
     #[test]
-    fn camera_without_serial_returns_none() {
+    fn camera_without_serial_has_empty_port() {
         let mock = MockEdsSdk::new().with_camera("Canon EOS R6", None);
         let cameras = mock.camera_list().unwrap();
         let info = mock.get_device_info(cameras[0]).unwrap();
         assert_eq!(info.model_name(), "Canon EOS R6");
-        assert_eq!(info.serial_number(), None);
+        assert_eq!(info.port_name(), "");
     }
 
     #[test]

@@ -9,7 +9,7 @@ pub mod directshow {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use tracing::{debug, error, info, trace, warn};
+    use tracing::{debug, error, info, warn};
     use windows::core::{Interface, GUID, HRESULT};
     use windows::Win32::Media::DirectShow::{
         IAMStreamConfig, IBaseFilter, ICreateDevEnum, IFilterGraph2, IGraphBuilder, IMediaControl,
@@ -28,10 +28,8 @@ pub mod directshow {
 
     use crate::diagnostics::stats::DiagnosticStats;
     use crate::preview::capture::{Frame, FrameBuffer};
-    use crate::preview::graph::{
-        convert_bgr_bottom_up_to_rgb, convert_nv12_to_rgb, convert_yuy2_to_rgb,
-        is_obs_virtual_camera,
-    };
+    use crate::preview::gpu::{self, GpuContext, PixelFormat};
+    use crate::preview::graph::is_obs_virtual_camera;
 
     // --- Manually defined types not in windows-rs metadata ---
 
@@ -232,6 +230,10 @@ pub mod directshow {
         sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
+        /// Optional GPU context for hardware-accelerated colour conversion.
+        gpu: Option<Arc<GpuContext>>,
+        /// Optional sender for async JPEG encoding via the encode worker.
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     }
 
     static FRAME_CALLBACK_VTBL: ISampleGrabberCBVtbl = ISampleGrabberCBVtbl {
@@ -309,8 +311,8 @@ pub mod directshow {
         let width = data.width as usize;
         let height = data.height as usize;
 
-        let rgb = if data.sub_type == MEDIASUBTYPE_RGB24 {
-            // DirectShow delivers BGR24 bottom-up; convert to RGB24 top-down
+        // Determine pixel format and validate buffer size
+        let format = if data.sub_type == MEDIASUBTYPE_RGB24 {
             let expected = width * 3 * height;
             if len < expected {
                 warn!(
@@ -319,7 +321,7 @@ pub mod directshow {
                 data.stats.lock().record_drop();
                 return HRESULT(0);
             }
-            convert_bgr_bottom_up_to_rgb(raw, width, height)
+            PixelFormat::Bgr24BottomUp
         } else if data.sub_type == MEDIASUBTYPE_YUY2 {
             let expected = width * height * 2;
             if len < expected {
@@ -329,7 +331,7 @@ pub mod directshow {
                 data.stats.lock().record_drop();
                 return HRESULT(0);
             }
-            convert_yuy2_to_rgb(raw, width, height)
+            PixelFormat::Yuy2
         } else if data.sub_type == MEDIASUBTYPE_NV12 {
             let expected = width * height * 3 / 2;
             if len < expected {
@@ -339,8 +341,7 @@ pub mod directshow {
                 data.stats.lock().record_drop();
                 return HRESULT(0);
             }
-            trace!(target: "preview::graph", "Converting NV12 frame to RGB");
-            convert_nv12_to_rgb(raw, width, height)
+            PixelFormat::Nv12
         } else {
             // Unsupported format — drop the frame to prevent panics in
             // compress_jpeg which expects RGB24 (width*height*3 bytes).
@@ -352,7 +353,21 @@ pub mod directshow {
             return HRESULT(0);
         };
 
+        // Convert using GPU if available, otherwise CPU fallback
+        let rgb = gpu::convert_frame(data.gpu.as_ref(), format, raw, width, height);
+
         let frame_bytes = rgb.len();
+
+        // Send to the async JPEG encode worker (non-blocking)
+        if let Some(sender) = &data.frame_sender {
+            sender.send(Frame {
+                data: rgb.clone(),
+                width: data.width,
+                height: data.height,
+                timestamp_us,
+            });
+        }
+
         data.buffer.push(Frame {
             data: rgb,
             width: data.width,
@@ -376,6 +391,7 @@ pub mod directshow {
 
     /// Create a new ISampleGrabberCB implementation that pushes frames
     /// into the buffer.
+    #[allow(clippy::too_many_arguments)]
     fn create_frame_callback(
         buffer: Arc<FrameBuffer>,
         width: u32,
@@ -383,6 +399,8 @@ pub mod directshow {
         sub_type: GUID,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
+        gpu: Option<Arc<GpuContext>>,
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     ) -> *mut core::ffi::c_void {
         let data = Box::new(FrameCallbackData {
             vtbl: &FRAME_CALLBACK_VTBL,
@@ -393,6 +411,8 @@ pub mod directshow {
             sub_type,
             running,
             stats,
+            gpu,
+            frame_sender,
         });
         Box::into_raw(data) as *mut core::ffi::c_void
     }
@@ -803,6 +823,7 @@ pub mod directshow {
     /// This function blocks the calling thread, running the filter graph
     /// until `running` is set to false. Should be called from a dedicated
     /// capture thread.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_capture_graph(
         device_path: &str,
         friendly_name: &str,
@@ -811,6 +832,8 @@ pub mod directshow {
         buffer: Arc<FrameBuffer>,
         running: Arc<AtomicBool>,
         stats: Arc<Mutex<DiagnosticStats>>,
+        gpu: Option<Arc<GpuContext>>,
+        frame_sender: Option<crate::preview::encode_worker::FrameSender>,
     ) -> Result<(), String> {
         unsafe {
             let _guard = ComGuard::init()?;
@@ -1046,6 +1069,8 @@ pub mod directshow {
                 actual_sub_type,
                 Arc::clone(&running),
                 stats,
+                gpu,
+                frame_sender,
             );
 
             let hr = grabber.set_callback(callback, 1);

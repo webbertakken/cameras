@@ -5,7 +5,13 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "windows")]
 use tracing::{error, info};
 
+use crate::camera::canon::api::{CameraHandle, EdsSdkApi};
+use crate::camera::canon::live_view::LiveViewSession;
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
+use crate::preview::encode_worker::{
+    EncodeWorker, EncodingSnapshot, JpegFrameBuffer, WorkerConfig,
+};
+use crate::preview::gpu::GpuContext;
 
 /// Callback type for reporting capture errors to the frontend.
 /// Arguments: (device_id, error_message).
@@ -94,6 +100,8 @@ pub struct CaptureSession {
     thread: Option<JoinHandle<()>>,
     watchdog: Option<JoinHandle<()>>,
     stats: Arc<Mutex<DiagnosticStats>>,
+    /// Async JPEG encode worker — produces JPEG frames from raw RGB input.
+    encode_worker: Option<EncodeWorker>,
 }
 
 /// Payload emitted via the `preview-error` Tauri event when a capture
@@ -129,12 +137,19 @@ impl CaptureSession {
     /// Create and start a capture session for the given device.
     ///
     /// On Windows, spawns a thread that builds a DirectShow filter graph
-    /// (Source → SampleGrabber → NullRenderer) and delivers RGB24 frames
+    /// (Source -> SampleGrabber -> NullRenderer) and delivers RGB24 frames
     /// into the shared FrameBuffer via an ISampleGrabberCB callback.
+    ///
+    /// An async encode worker thread compresses frames to JPEG in the
+    /// background, storing results in a `JpegFrameBuffer`.
     ///
     /// If `on_error` is provided, it is called with `(device_id, error_msg)`
     /// when the capture graph fails, allowing the caller to surface errors
     /// to the frontend.
+    ///
+    /// If `gpu` is provided, colour conversion runs on the GPU; otherwise
+    /// the CPU fallback is used.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device_id: String,
         friendly_name: String,
@@ -142,11 +157,19 @@ impl CaptureSession {
         height: u32,
         _fps: f32,
         on_error: Option<ErrorCallback>,
+        gpu: Option<Arc<GpuContext>>,
+        jpeg_quality: u8,
     ) -> Self {
         let buffer = Arc::new(FrameBuffer::new(3));
         let running = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
+
+        // Spawn the JPEG encode worker
+        let (encode_worker, frame_sender) = EncodeWorker::spawn(WorkerConfig {
+            quality: jpeg_quality,
+            ..WorkerConfig::default()
+        });
 
         // Clone on_error for the watchdog — the capture thread gets the original
         let on_error_wd = on_error.clone();
@@ -173,6 +196,8 @@ impl CaptureSession {
                                 buffer_clone,
                                 running_clone,
                                 stats_clone,
+                                gpu,
+                                Some(frame_sender),
                             ) {
                                 error!("capture graph failed for {device_id_clone}: {e}");
                                 if let Some(cb) = &on_error {
@@ -196,6 +221,8 @@ impl CaptureSession {
                     width,
                     height,
                     on_error,
+                    gpu,
+                    frame_sender,
                 );
                 None
             }
@@ -231,12 +258,21 @@ impl CaptureSession {
             thread,
             watchdog,
             stats,
+            encode_worker: Some(encode_worker),
         }
     }
 
-    /// Get a reference to the frame buffer.
+    /// Get a reference to the raw RGB frame buffer.
     pub fn buffer(&self) -> &Arc<FrameBuffer> {
         &self.buffer
+    }
+
+    /// Get a reference to the JPEG output buffer from the encode worker.
+    ///
+    /// Returns `None` if the encode worker was never started (shouldn't
+    /// happen in normal operation).
+    pub fn jpeg_buffer(&self) -> Option<&Arc<JpegFrameBuffer>> {
+        self.encode_worker.as_ref().map(|w| w.jpeg_buffer())
     }
 
     /// Check if the capture session is currently running.
@@ -252,6 +288,13 @@ impl CaptureSession {
     /// Take a snapshot of diagnostic stats for this session.
     pub fn diagnostics(&self) -> DiagnosticSnapshot {
         self.stats.lock().snapshot()
+    }
+
+    /// Take a snapshot of encoding performance stats for this session.
+    ///
+    /// Returns `None` if no encode worker is active.
+    pub fn encoding_snapshot(&self) -> Option<EncodingSnapshot> {
+        self.encode_worker.as_ref().map(|w| w.encoding_snapshot())
     }
 
     /// Watchdog: waits for the graph to start running, then checks that frames
@@ -345,6 +388,151 @@ impl CaptureSession {
         if let Some(handle) = self.watchdog.take() {
             let _ = handle.join();
         }
+        if let Some(mut worker) = self.encode_worker.take() {
+            worker.stop();
+        }
+    }
+}
+
+/// Canon live view capture session.
+///
+/// Wraps a `LiveViewSession` that polls JPEG frames from the Canon SDK
+/// and pushes them directly into a `JpegFrameBuffer`. No encoding step
+/// is needed since Canon delivers JPEG natively.
+pub struct CanonCaptureSession {
+    device_id: String,
+    live_view: Option<LiveViewSession>,
+    jpeg_buffer: Arc<JpegFrameBuffer>,
+    /// Type-erased SDK reference for stopping the live view session.
+    /// Stored as a closure that calls `stop()` with the correct types.
+    stop_fn: Option<Box<dyn FnOnce(LiveViewSession) + Send>>,
+}
+
+impl CanonCaptureSession {
+    /// Create and start a Canon capture session for the given device.
+    ///
+    /// The caller must ensure that a camera session is already open (managed
+    /// by `CanonBackend::enumerate_devices`). This method only starts live
+    /// view and begins polling JPEG frames into the JPEG buffer.
+    pub fn new<S: EdsSdkApi + 'static>(
+        device_id: String,
+        sdk: Arc<S>,
+        camera: CameraHandle,
+    ) -> Result<Self, String> {
+        let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
+
+        let live_view = LiveViewSession::start(Arc::clone(&sdk), camera, Arc::clone(&jpeg_buffer))
+            .map_err(|e| format!("failed to start Canon live view: {e}"))?;
+
+        tracing::info!("Started Canon live view for {device_id}");
+
+        // Capture the SDK and camera handle in a closure for clean shutdown
+        let stop_fn: Box<dyn FnOnce(LiveViewSession) + Send> =
+            Box::new(move |session: LiveViewSession| {
+                session.stop(&*sdk, camera);
+            });
+
+        Ok(Self {
+            device_id,
+            live_view: Some(live_view),
+            jpeg_buffer,
+            stop_fn: Some(stop_fn),
+        })
+    }
+
+    /// Get a reference to the JPEG output buffer.
+    pub fn jpeg_buffer(&self) -> &Arc<JpegFrameBuffer> {
+        &self.jpeg_buffer
+    }
+
+    /// Check if the live view session is currently running.
+    pub fn is_running(&self) -> bool {
+        self.live_view
+            .as_ref()
+            .map(|lv| lv.is_running())
+            .unwrap_or(false)
+    }
+
+    /// Return the device ID for this session.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// Stop the Canon capture session. Idempotent.
+    pub fn stop(&mut self) {
+        if let (Some(live_view), Some(stop_fn)) = (self.live_view.take(), self.stop_fn.take()) {
+            stop_fn(live_view);
+            tracing::info!("Stopped Canon live view for {}", self.device_id);
+        }
+    }
+}
+
+/// Unified preview session wrapping either a DirectShow or Canon capture.
+///
+/// The preview commands layer stores these in the sessions map so that
+/// `get_frame` can read JPEG data regardless of the capture backend.
+pub enum PreviewSession {
+    /// DirectShow capture session (RGB frames encoded to JPEG).
+    DirectShow(CaptureSession),
+    /// Canon live view session (native JPEG passthrough).
+    Canon(CanonCaptureSession),
+}
+
+impl PreviewSession {
+    /// Get the JPEG buffer for this session, if available.
+    pub fn jpeg_buffer(&self) -> Option<&Arc<JpegFrameBuffer>> {
+        match self {
+            Self::DirectShow(session) => session.jpeg_buffer(),
+            Self::Canon(session) => Some(session.jpeg_buffer()),
+        }
+    }
+
+    /// Get the raw frame buffer (DirectShow only).
+    pub fn buffer(&self) -> Option<&Arc<FrameBuffer>> {
+        match self {
+            Self::DirectShow(session) => Some(session.buffer()),
+            Self::Canon(_) => None,
+        }
+    }
+
+    /// Check if the session is running.
+    pub fn is_running(&self) -> bool {
+        match self {
+            Self::DirectShow(session) => session.is_running(),
+            Self::Canon(session) => session.is_running(),
+        }
+    }
+
+    /// Return the device ID for this session.
+    pub fn device_id(&self) -> &str {
+        match self {
+            Self::DirectShow(session) => session.device_id(),
+            Self::Canon(session) => session.device_id(),
+        }
+    }
+
+    /// Take a snapshot of diagnostic stats (DirectShow only).
+    pub fn diagnostics(&self) -> DiagnosticSnapshot {
+        match self {
+            Self::DirectShow(session) => session.diagnostics(),
+            Self::Canon(_) => DiagnosticSnapshot::default(),
+        }
+    }
+
+    /// Take a snapshot of encoding stats.
+    pub fn encoding_snapshot(&self) -> Option<EncodingSnapshot> {
+        match self {
+            Self::DirectShow(session) => session.encoding_snapshot(),
+            Self::Canon(_) => None,
+        }
+    }
+
+    /// Stop the session. Idempotent.
+    pub fn stop(&mut self) {
+        match self {
+            Self::DirectShow(session) => session.stop(),
+            Self::Canon(session) => session.stop(),
+        }
     }
 }
 
@@ -420,6 +608,8 @@ mod tests {
             1080,
             30.0,
             None,
+            None,
+            75,
         );
         assert!(!session.is_running());
         assert!(session.buffer().latest().is_none());
@@ -434,6 +624,8 @@ mod tests {
             480,
             30.0,
             None,
+            None,
+            75,
         );
         session.stop();
         session.stop(); // Should not panic
@@ -471,6 +663,8 @@ mod tests {
             480,
             30.0,
             Some(on_error),
+            None,
+            75,
         );
         // On non-Windows, no capture thread spawns, so callback won't fire
         // but the session should still be valid

@@ -13,7 +13,7 @@ pub struct DiagnosticStats {
 }
 
 /// Snapshot of diagnostic stats for IPC serialisation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticSnapshot {
     pub fps: f64,

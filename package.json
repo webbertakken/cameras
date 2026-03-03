@@ -7,7 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "tauri dev --features canon",
     "dev:vite": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

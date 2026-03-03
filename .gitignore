@@ -30,6 +30,8 @@ Thumbs.db
 .claude/
 PROMPT.md
 AMBIGUITIES.md
+DECISIONS.md
+ALL_PROMPTS.md
 
 # Chainlink
 .chainlink/
@@ -45,3 +47,9 @@ AMBIGUITIES.md
 !.yarn/versions
 .pnp.*
 CHANGELOG.md
+
+# Temporary files
+tmp/
+
+# SDKs
+.proprietary

@@ -10,6 +10,21 @@
 - Fix React strict mode double-mount killing preview (#14)
 
 ### Changed
+- Add Rust integration test: EdsSdk real hardware discovery (#74)
+- Add Tauri E2E test: Canon camera appears in device list (#73)
+- Wire open_session and close_session FFI in EdsSdk (#68)
+- Wire get_device_info FFI in EdsSdk (#67)
+- Wire EdsSdk to store EdsCameraRef handles (#66)
+- Wire Canon hotplug detection in production (#69)
+- GPU encoding validation and PR #57 merge readiness (#59)
+- Validate MF JPEG encoder end-to-end on real hardware (#65)
+- Fix DirectShow hotplug detection for new USB cameras (#57)
+- Canon EDSDK real DLL wiring and build configuration (#58)
+- Update CI to handle canon feature flag (#64)
+- Wire real EDSDK FFI to sdk.rs wrapper (#63)
+- Configure build.rs for EDSDK DLL linking (#62)
+- Implement hotplug fix based on investigation findings (#61)
+- Investigate hotplug root cause — COM threading, HWND_MESSAGE, and WM_DEVICECHANGE delivery (#60)
 
 - Create DEVELOPMENT.md with dev setup and EDSDK instructions (#56)
 - End-to-end smoke test with MockEdsSdk (#46)

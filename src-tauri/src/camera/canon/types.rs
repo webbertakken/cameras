@@ -33,16 +33,19 @@ pub type EdsStateEvent = u32;
 pub type EdsCameraCommand = u32;
 
 /// Device information returned by `EdsGetDeviceInfo`.
+///
+/// Layout matches the C struct `tagEdsDeviceInfo` from EDSDKTypes.h.
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct EdsDeviceInfo {
-    /// Model name (null-terminated).
+    /// Port name (null-terminated, e.g. "\\.\USB001").
+    pub port_name: [u8; 256],
+    /// Device description / model name (null-terminated, e.g. "Canon EOS R5").
     pub device_description: [u8; 256],
-    /// Serial number (null-terminated, may be empty).
-    pub body_id_ex: [u8; 256],
-    /// Reserved fields.
-    pub reserved1: u32,
-    pub reserved2: u32,
+    /// Device sub-type identifier.
+    pub device_sub_type: u32,
+    /// Reserved by Canon SDK.
+    pub reserved: u32,
 }
 
 impl EdsDeviceInfo {
@@ -51,14 +54,9 @@ impl EdsDeviceInfo {
         read_c_string(&self.device_description)
     }
 
-    /// Extract the serial number as a Rust string. Returns `None` if empty.
-    pub fn serial_number(&self) -> Option<String> {
-        let s = read_c_string(&self.body_id_ex);
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+    /// Extract the port name as a Rust string.
+    pub fn port_name(&self) -> String {
+        read_c_string(&self.port_name)
     }
 }
 
@@ -93,6 +91,22 @@ pub const EDS_ERR_TAKE_PICTURE_AF_NG: EdsError = 0x00008D01;
 pub const EDS_ERR_COMM_DISCONNECTED: EdsError = 0x000000C1;
 /// Invalid handle passed to the SDK.
 pub const EDS_ERR_INVALID_HANDLE: EdsError = 0x00000061;
+/// The device is not found.
+pub const EDS_ERR_DEVICE_NOT_FOUND: EdsError = 0x00000080;
+/// Device is not launched/ready.
+pub const EDS_ERR_DEVICE_NOT_RELEASED: EdsError = 0x000000A2;
+/// USB device lock error.
+pub const EDS_ERR_USB_DEVICE_LOCK_ERROR: EdsError = 0x000000D0;
+/// USB device unlock error.
+pub const EDS_ERR_USB_DEVICE_UNLOCK_ERROR: EdsError = 0x000000D1;
+/// EVF not activated.
+pub const EDS_ERR_EVF_NOT_ACTIVATED: EdsError = 0x0000A102;
+/// EVF selection fault.
+pub const EDS_ERR_EVF_SELECTION_FAULT: EdsError = 0x0000A103;
+/// Stream I/O error.
+pub const EDS_ERR_STREAM_IO_ERROR: EdsError = 0x00000020;
+/// Session already open.
+pub const EDS_ERR_SESSION_ALREADY_OPEN: EdsError = 0x00002114;
 
 // --- Property IDs ---
 
@@ -108,6 +122,15 @@ pub const PROP_ID_EXPOSURE_COMPENSATION: EdsPropertyID = 0x00000406;
 pub const PROP_ID_WHITE_BALANCE: EdsPropertyID = 0x00000403;
 /// Battery level property.
 pub const PROP_ID_BATTERY_LEVEL: EdsPropertyID = 0x00000006;
+/// EVF output device property (used to enable/disable live view).
+pub const PROP_ID_EVF_OUTPUT_DEVICE: EdsPropertyID = 0x00000500;
+
+// --- EVF output device flags ---
+
+/// Enable EVF output on the camera TFT/LCD.
+pub const EVF_OUTPUT_DEVICE_TFT: u32 = 0x01;
+/// Enable EVF output to the PC (live view streaming via USB).
+pub const EVF_OUTPUT_DEVICE_PC: u32 = 0x02;
 
 // --- Camera commands ---
 
@@ -135,13 +158,21 @@ pub fn error_description(code: EdsError) -> &'static str {
         EDS_ERR_OK => "success",
         EDS_ERR_INTERNAL_ERROR => "EDSDK internal error",
         EDS_ERR_MEM_ALLOC_FAILED => "memory allocation failed",
-        EDS_ERR_DEVICE_BUSY => "camera is busy — retry shortly",
-        EDS_ERR_SESSION_NOT_OPEN => "no camera session is open",
-        EDS_ERR_OBJECT_NOTREADY => "live view data not ready yet",
-        EDS_ERR_PROPERTIES_UNAVAILABLE => "property not available on this camera",
-        EDS_ERR_TAKE_PICTURE_AF_NG => "autofocus failed during capture",
-        EDS_ERR_COMM_DISCONNECTED => "camera disconnected",
+        EDS_ERR_STREAM_IO_ERROR => "stream I/O error",
         EDS_ERR_INVALID_HANDLE => "invalid camera handle",
+        EDS_ERR_DEVICE_NOT_FOUND => "device not found",
+        EDS_ERR_DEVICE_BUSY => "camera is busy — retry shortly",
+        EDS_ERR_DEVICE_NOT_RELEASED => "device not released",
+        EDS_ERR_COMM_DISCONNECTED => "camera disconnected",
+        EDS_ERR_USB_DEVICE_LOCK_ERROR => "USB device lock error",
+        EDS_ERR_USB_DEVICE_UNLOCK_ERROR => "USB device unlock error",
+        EDS_ERR_SESSION_NOT_OPEN => "no camera session is open",
+        EDS_ERR_SESSION_ALREADY_OPEN => "session already open",
+        EDS_ERR_TAKE_PICTURE_AF_NG => "autofocus failed during capture",
+        EDS_ERR_PROPERTIES_UNAVAILABLE => "property not available on this camera",
+        EDS_ERR_OBJECT_NOTREADY => "live view data not ready yet",
+        EDS_ERR_EVF_NOT_ACTIVATED => "EVF not activated",
+        EDS_ERR_EVF_SELECTION_FAULT => "EVF selection fault",
         _ => "unknown EDSDK error",
     }
 }
@@ -182,10 +213,10 @@ mod tests {
     #[test]
     fn eds_device_info_model_name_reads_c_string() {
         let mut info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
         let name = b"Canon EOS R5";
         info.device_description[..name.len()].copy_from_slice(name);
@@ -194,28 +225,29 @@ mod tests {
     }
 
     #[test]
-    fn eds_device_info_serial_number_reads_c_string() {
+    fn eds_device_info_port_name_reads_c_string() {
         let mut info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
-        let serial = b"0123456789";
-        info.body_id_ex[..serial.len()].copy_from_slice(serial);
+        let port = b"\\\\.\\USB001";
+        info.port_name[..port.len()].copy_from_slice(port);
 
-        assert_eq!(info.serial_number(), Some("0123456789".to_string()));
+        assert_eq!(info.port_name(), "\\\\.\\USB001");
     }
 
     #[test]
-    fn eds_device_info_empty_serial_returns_none() {
+    fn eds_device_info_empty_fields_return_empty_strings() {
         let info = EdsDeviceInfo {
+            port_name: [0u8; 256],
             device_description: [0u8; 256],
-            body_id_ex: [0u8; 256],
-            reserved1: 0,
-            reserved2: 0,
+            device_sub_type: 0,
+            reserved: 0,
         };
-        assert_eq!(info.serial_number(), None);
+        assert_eq!(info.model_name(), "");
+        assert_eq!(info.port_name(), "");
     }
 
     #[test]
