@@ -1,5 +1,11 @@
 # Agents
 
+## Platform support
+
+- **Windows**: Windows 11+ only (Build 22000+). No Windows 10 support.
+- **Linux**: Supported
+- **macOS**: Supported
+
 ## Development approach
 
 - **TDD (Test-Driven Development)** for all implementation
