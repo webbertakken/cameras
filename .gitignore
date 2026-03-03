@@ -47,5 +47,8 @@ DECISIONS.md
 .pnp.*
 CHANGELOG.md
 
+# Temporary files
+tmp/
+
 # SDKs
 .proprietary
