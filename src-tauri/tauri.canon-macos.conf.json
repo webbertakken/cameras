@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "macOS": {
+      "frameworks": ["../.proprietary/canon/macos/EDSDK.framework"]
+    }
+  }
+}
