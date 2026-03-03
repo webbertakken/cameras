@@ -1,3 +1,10 @@
+pub mod stub;
+
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
@@ -71,6 +78,22 @@ impl Default for VirtualCameraState {
     }
 }
 
+/// Create a platform-appropriate virtual camera sink.
+pub fn create_sink() -> Box<dyn VirtualCameraSink> {
+    #[cfg(target_os = "windows")]
+    {
+        Box::new(windows::DirectShowVirtualCamera)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(linux::V4l2LoopbackSink)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Box::new(stub::StubSink)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +159,27 @@ mod tests {
         // Stopping a non-existent device should be fine
         assert!(state.stop("nonexistent").is_ok());
         assert!(state.stop("nonexistent").is_ok());
+    }
+
+    #[test]
+    fn create_sink_returns_platform_appropriate() {
+        let mut sink = create_sink();
+
+        // All current platform sinks are stubs that return errors
+        let err = sink.start().unwrap_err();
+        assert!(
+            err.contains("not yet"),
+            "expected stub error message, got: {err}"
+        );
+        assert!(!sink.is_running());
+
+        // On Windows specifically, verify it's the DirectShow variant
+        #[cfg(target_os = "windows")]
+        {
+            assert!(
+                err.contains("DirectShow"),
+                "expected DirectShow sink on Windows, got: {err}"
+            );
+        }
     }
 }
