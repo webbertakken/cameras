@@ -10,6 +10,8 @@ mod preset;
 mod preview;
 mod settings;
 mod tray;
+#[allow(dead_code)]
+mod virtual_camera;
 
 use std::sync::Arc;
 
