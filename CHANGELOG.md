@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/webbertakken/cameras/compare/v0.7.0...v0.7.1) (2026-03-03)
+
+
+### Bug fixes
+
+* bundle Canon EDSDK libraries in installers ([#58](https://github.com/webbertakken/cameras/issues/58)) ([430380f](https://github.com/webbertakken/cameras/commit/430380fa020884f52e15674ab10621401a614fc3))
+
 ## [0.7.0](https://github.com/webbertakken/cameras/compare/v0.6.0...v0.7.0) (2026-03-03)
 
 
