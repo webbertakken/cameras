@@ -375,6 +375,37 @@ impl EdsSdkApi for EdsSdk {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::camera::canon::api::EdsSdkApi;
+
+    #[test]
+    #[ignore] // requires Canon camera connected + EDSDK DLLs
+    fn real_sdk_discovers_connected_canon_camera() {
+        let sdk = EdsSdk::new().expect("EDSDK should initialise");
+
+        let handles = sdk.camera_list().expect("camera_list should succeed");
+        assert!(
+            !handles.is_empty(),
+            "expected at least one Canon camera connected"
+        );
+
+        // Verify we can get device info for the first camera
+        let info = sdk
+            .get_device_info(handles[0])
+            .expect("get_device_info should succeed");
+        let model = info.model_name();
+        let port = info.port_name();
+
+        assert!(!model.is_empty(), "model name should not be empty");
+        println!("Canon camera: model={model}, port={port}");
+
+        // SDK should be droppable without errors (RAII cleanup)
+        drop(sdk);
+    }
+}
+
 /// Read all data from an EDSDK memory stream.
 ///
 /// Reads the stream length via `EdsGetLength`, then copies the raw bytes

@@ -384,4 +384,46 @@ mod tests {
             "error should include the attempted control name: {err}"
         );
     }
+
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    #[test]
+    #[ignore] // requires Canon camera connected + EDSDK DLLs
+    fn e2e_canon_camera_appears_in_device_list() {
+        use crate::camera::canon::backend::CanonBackend;
+        use crate::camera::canon::sdk::EdsSdk;
+        use crate::camera::composite::CompositeBackend;
+
+        let sdk = EdsSdk::new().expect("EDSDK should initialise");
+        let canon_backend = CanonBackend::new(std::sync::Arc::new(sdk));
+        let composite = CompositeBackend::new(vec![Box::new(canon_backend)]);
+
+        let devices = composite
+            .enumerate_devices()
+            .expect("enumerate should succeed");
+
+        // At least one Canon camera should be found
+        let canon_devices: Vec<_> = devices
+            .iter()
+            .filter(|d| d.id.as_str().starts_with("canon:"))
+            .collect();
+
+        assert!(
+            !canon_devices.is_empty(),
+            "expected at least one Canon camera, got: {devices:?}"
+        );
+
+        // Verify device has valid info
+        let cam = &canon_devices[0];
+        assert!(!cam.name.is_empty(), "camera name should not be empty");
+        assert!(
+            cam.device_path.starts_with("edsdk://"),
+            "device path should start with edsdk://"
+        );
+        assert!(cam.is_connected);
+
+        println!(
+            "Found Canon camera: {} (id: {}, path: {})",
+            cam.name, cam.id, cam.device_path
+        );
+    }
 }
