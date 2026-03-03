@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+
 use crate::camera::error::{CameraError, Result};
 
 use super::api::{CameraHandle, EdsSdkApi};
@@ -30,11 +32,57 @@ unsafe impl Send for SendSyncPtr {}
 // SAFETY: All access to stored handles goes through Mutex.
 unsafe impl Sync for SendSyncPtr {}
 
+/// COM apartment guard — ensures CoInitializeEx/CoUninitialize pairing.
+///
+/// EDSDK requires COM STA (Single-Threaded Apartment). This guard
+/// initializes COM before the SDK and keeps it alive for the SDK's
+/// lifetime. Handles the case where COM is already initialized
+/// (e.g. by Tauri's tao event loop).
+struct ComGuard {
+    owns_init: bool,
+}
+
+impl ComGuard {
+    fn init() -> Result<Self> {
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if hr.is_err() {
+                // RPC_E_CHANGED_MODE means COM is already initialised
+                // with a different apartment type. EDSDK works in both
+                // STA and MTA, so accept the existing apartment.
+                if hr == windows::core::HRESULT(0x80010106u32 as i32) {
+                    tracing::debug!(
+                        "COM already initialised, reusing existing apartment for EDSDK"
+                    );
+                    return Ok(Self { owns_init: false });
+                }
+                return Err(CameraError::CanonSdkError(format!(
+                    "CoInitializeEx for EDSDK failed: {hr:?}"
+                )));
+            }
+        }
+        Ok(Self { owns_init: true })
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        if self.owns_init {
+            unsafe {
+                CoUninitialize();
+            }
+        }
+    }
+}
+
 /// Safe wrapper around the Canon EDSDK.
 ///
-/// Initialises the SDK on construction and terminates it on drop.
+/// Initialises COM and the SDK on construction, terminates both on drop.
 /// Only one instance should exist per process.
 pub struct EdsSdk {
+    /// COM guard — must be dropped AFTER the SDK is terminated.
+    /// Field order matters: Rust drops fields in declaration order.
+    _com: ComGuard,
     /// Stored camera references, keyed by CameraHandle index.
     cameras: Mutex<HashMap<CameraHandle, SendSyncPtr>>,
     /// The camera list reference from the most recent enumeration.
@@ -54,6 +102,11 @@ impl EdsSdk {
             ));
         }
 
+        // Initialize COM before the SDK — EDSDK requires COM STA.
+        let com = ComGuard::init().inspect_err(|_| {
+            SDK_INITIALISED.store(false, Ordering::SeqCst);
+        })?;
+
         let err = unsafe { ffi::EdsInitializeSDK() };
         if err != EDS_ERR_OK {
             SDK_INITIALISED.store(false, Ordering::SeqCst);
@@ -65,6 +118,7 @@ impl EdsSdk {
         }
 
         Ok(Self {
+            _com: com,
             cameras: Mutex::new(HashMap::new()),
             camera_list_ref: Mutex::new(None),
         })
