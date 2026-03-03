@@ -20,19 +20,19 @@ jobs:
         include:
           - target: windows-x64
             os: windows-latest
-            args: --features canon
+            args: --features canon --config src-tauri/tauri.canon-windows.conf.json
           - target: macos-arm64
             os: macos-latest
-            args: --target aarch64-apple-darwin --features canon
+            args: --target aarch64-apple-darwin --features canon --config src-tauri/tauri.canon-macos.conf.json
           - target: macos-x64
             os: macos-latest
-            args: --target x86_64-apple-darwin --features canon
+            args: --target x86_64-apple-darwin --features canon --config src-tauri/tauri.canon-macos.conf.json
           - target: linux-x64
             os: ubuntu-22.04
-            args: --features canon
+            args: --features canon --config src-tauri/tauri.canon-linux.conf.json
           - target: linux-arm64
             os: ubuntu-22.04-arm
-            args: --features canon
+            args: --features canon --config src-tauri/tauri.canon-linux.conf.json
 
     runs-on: ${{ matrix.os }}
     permissions:
@@ -72,11 +72,6 @@ jobs:
               gcloud storage cp -r gs://cameras-ci-sdk/canon/macos/EDSDK.framework .proprietary/canon/macos/
               ;;
           esac
-
-          # Ensure all SDK directories exist so Tauri resource globs resolve on every platform
-          mkdir -p .proprietary/canon/windows/Dll
-          mkdir -p .proprietary/canon/linux-x64
-          mkdir -p .proprietary/canon/linux-arm64
 
       - name: Install system dependencies (Linux)
         if: startsWith(matrix.os, 'ubuntu')

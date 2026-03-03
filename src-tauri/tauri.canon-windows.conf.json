@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../.proprietary/canon/windows/Dll/*.dll": "./"
+    }
+  }
+}
