@@ -16,6 +16,7 @@ use crate::camera::types::{
 use super::api::{CameraHandle, EdsSdkApi};
 use super::controls::get_canon_controls;
 use super::discovery::discover_cameras;
+use super::hotplug::CanonHotplugWatcher;
 use super::types::*;
 
 /// Internal state for a discovered Canon camera.
@@ -28,6 +29,7 @@ struct CanonCamera {
 pub struct CanonBackend<S: EdsSdkApi> {
     sdk: Arc<S>,
     cameras: Mutex<HashMap<DeviceId, CanonCamera>>,
+    hotplug_watcher: Mutex<Option<CanonHotplugWatcher>>,
 }
 
 impl<S: EdsSdkApi> CanonBackend<S> {
@@ -36,6 +38,7 @@ impl<S: EdsSdkApi> CanonBackend<S> {
         Self {
             sdk,
             cameras: Mutex::new(HashMap::new()),
+            hotplug_watcher: Mutex::new(None),
         }
     }
 
@@ -82,9 +85,10 @@ impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
         Ok(devices)
     }
 
-    fn watch_hotplug(&self, _callback: Box<dyn Fn(HotplugEvent) + Send>) -> Result<()> {
-        // Hotplug is handled by the composite backend level, or via
-        // CanonHotplugWatcher for standalone use.
+    fn watch_hotplug(&self, callback: Box<dyn Fn(HotplugEvent) + Send>) -> Result<()> {
+        let watcher = CanonHotplugWatcher::start(Arc::clone(&self.sdk), callback);
+        let mut guard = self.hotplug_watcher.lock().unwrap();
+        *guard = Some(watcher);
         Ok(())
     }
 
@@ -227,10 +231,25 @@ mod tests {
     }
 
     #[test]
-    fn watch_hotplug_succeeds() {
-        let backend = make_backend();
+    fn watch_hotplug_starts_watcher() {
+        let mock = Arc::new(MockEdsSdk::new().with_camera("Canon EOS R5", Some("SER001")));
+        let mock_ref = Arc::clone(&mock);
+        let backend = CanonBackend::new(mock);
+
         let result = backend.watch_hotplug(Box::new(|_| {}));
         assert!(result.is_ok());
+
+        // The watcher polls EDSDK events — wait for at least one poll cycle
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        assert!(
+            mock_ref.events_processed() > 0,
+            "hotplug watcher should process EDSDK events"
+        );
+
+        // Verify the watcher handle is stored
+        let guard = backend.hotplug_watcher.lock().unwrap();
+        assert!(guard.is_some(), "watcher handle should be stored");
     }
 
     #[test]
