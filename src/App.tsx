@@ -1,11 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useShallow } from 'zustand/react/shallow'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
 import { ToastContainer } from './features/notifications'
 import { PreviewCanvas } from './features/preview/PreviewCanvas'
+import { DiagnosticOverlay } from './features/preview/DiagnosticOverlay'
 import { usePreview } from './features/preview/usePreview'
+import { useDiagnostics } from './features/preview/useDiagnostics'
 import './App.css'
 
 function App() {
@@ -13,6 +15,22 @@ function App() {
   const selectedCamera = useCameraStore(
     useShallow((s) => s.cameras.find((c) => c.id === s.selectedId)),
   )
+
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const toggleDiagnostics = useCallback(() => setShowDiagnostics((v) => !v), [])
+
+  // Ctrl+D keyboard shortcut to toggle diagnostics overlay
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey && e.key === 'd') {
+        e.preventDefault()
+        setShowDiagnostics((v) => !v)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // List cameras and start all backend capture sessions on mount
   useEffect(() => {
@@ -30,6 +48,7 @@ function App() {
   useHotplug()
 
   const preview = usePreview(selectedCamera?.id ?? null)
+  const combinedDiagnostics = useDiagnostics(selectedCamera?.id ?? null, showDiagnostics)
 
   // Keep a ref to the latest start/stop so the effect only re-fires on
   // camera ID changes, not when the callback references are recreated.
@@ -59,11 +78,18 @@ function App() {
       <main className="app-main">
         {selectedCamera ? (
           <>
-            <PreviewCanvas
-              frameSrc={preview.frameSrc}
-              isLoading={preview.isActive && !preview.frameSrc}
-              error={preview.error}
-            />
+            <div className="app-main__preview-container">
+              <PreviewCanvas
+                frameSrc={preview.frameSrc}
+                isLoading={preview.isActive && !preview.frameSrc}
+                error={preview.error}
+              />
+              <DiagnosticOverlay
+                snapshot={combinedDiagnostics}
+                visible={showDiagnostics}
+                onToggle={toggleDiagnostics}
+              />
+            </div>
             <ControlsPanel cameraId={selectedCamera.id} cameraName={selectedCamera.name} />
           </>
         ) : (

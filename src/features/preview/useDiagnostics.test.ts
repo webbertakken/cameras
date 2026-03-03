@@ -9,6 +9,24 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { invoke } from '@tauri-apps/api/core'
 const mockInvoke = vi.mocked(invoke)
 
+const mockDiagnostics = {
+  fps: 29.97,
+  frameCount: 300,
+  dropCount: 2,
+  dropRate: 0.66,
+  latencyMs: 12.5,
+  bandwidthBps: 5_000_000,
+  usbBusInfo: null,
+}
+
+const mockEncoding = {
+  encoderKind: 'mfSoftware',
+  framesEncoded: 500,
+  framesDropped: 1,
+  avgEncodeMs: 3.2,
+  lastEncodeMs: 2.8,
+}
+
 describe('useDiagnostics', () => {
   beforeEach(() => {
     mockInvoke.mockReset()
@@ -28,17 +46,13 @@ describe('useDiagnostics', () => {
     expect(result.current).toBeNull()
   })
 
-  it('polls at 1000ms interval when enabled', async () => {
+  it('polls both diagnostics and encoding stats at 1000ms interval', async () => {
     vi.useFakeTimers()
-    const mockData = {
-      fps: 29.97,
-      frameCount: 300,
-      dropCount: 2,
-      dropRate: 0.66,
-      latencyMs: 12.5,
-      bandwidthBps: 5_000_000,
-    }
-    mockInvoke.mockResolvedValue(mockData)
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
+      if (cmd === 'get_encoding_stats') return Promise.resolve(mockEncoding)
+      return Promise.resolve(undefined)
+    })
 
     const { result, unmount } = renderHook(() => useDiagnostics('device-1', true))
 
@@ -46,10 +60,35 @@ describe('useDiagnostics', () => {
       await vi.advanceTimersByTimeAsync(1000)
     })
 
-    expect(mockInvoke).toHaveBeenCalledWith('get_diagnostics', {
-      deviceId: 'device-1',
+    expect(mockInvoke).toHaveBeenCalledWith('get_diagnostics', { deviceId: 'device-1' })
+    expect(mockInvoke).toHaveBeenCalledWith('get_encoding_stats', { deviceId: 'device-1' })
+    expect(result.current).toEqual({
+      diagnostics: mockDiagnostics,
+      encoding: mockEncoding,
     })
-    expect(result.current).toEqual(mockData)
+
+    unmount()
+    vi.useRealTimers()
+  })
+
+  it('returns encoding as null when get_encoding_stats fails', async () => {
+    vi.useFakeTimers()
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
+      if (cmd === 'get_encoding_stats') return Promise.reject(new Error('Not available'))
+      return Promise.resolve(undefined)
+    })
+
+    const { result, unmount } = renderHook(() => useDiagnostics('device-1', true))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+
+    expect(result.current).toEqual({
+      diagnostics: mockDiagnostics,
+      encoding: null,
+    })
 
     unmount()
     vi.useRealTimers()
@@ -57,7 +96,7 @@ describe('useDiagnostics', () => {
 
   it('cleans up interval when disabled', async () => {
     vi.useFakeTimers()
-    mockInvoke.mockResolvedValue({ fps: 30 })
+    mockInvoke.mockResolvedValue(mockDiagnostics)
 
     const { rerender, unmount } = renderHook(({ enabled }) => useDiagnostics('device-1', enabled), {
       initialProps: { enabled: true },
