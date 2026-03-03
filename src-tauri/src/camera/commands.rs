@@ -394,7 +394,9 @@ mod tests {
         use crate::camera::composite::CompositeBackend;
 
         let sdk = EdsSdk::new().expect("EDSDK should initialise");
-        let canon_backend = CanonBackend::new(std::sync::Arc::new(sdk));
+        let handle_map =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let canon_backend = CanonBackend::new(std::sync::Arc::new(sdk), handle_map);
         let composite = CompositeBackend::new(vec![Box::new(canon_backend)]);
 
         let devices = composite

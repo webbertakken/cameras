@@ -5,6 +5,8 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "windows")]
 use tracing::{error, info};
 
+use crate::camera::canon::api::{CameraHandle, EdsSdkApi};
+use crate::camera::canon::live_view::LiveViewSession;
 use crate::diagnostics::stats::{DiagnosticSnapshot, DiagnosticStats};
 use crate::preview::encode_worker::{
     EncodeWorker, EncodingSnapshot, JpegFrameBuffer, WorkerConfig,
@@ -388,6 +390,147 @@ impl CaptureSession {
         }
         if let Some(mut worker) = self.encode_worker.take() {
             worker.stop();
+        }
+    }
+}
+
+/// Canon live view capture session.
+///
+/// Wraps a `LiveViewSession` that polls JPEG frames from the Canon SDK
+/// and pushes them directly into a `JpegFrameBuffer`. No encoding step
+/// is needed since Canon delivers JPEG natively.
+pub struct CanonCaptureSession {
+    device_id: String,
+    live_view: Option<LiveViewSession>,
+    jpeg_buffer: Arc<JpegFrameBuffer>,
+    /// Type-erased SDK reference for stopping the live view session.
+    /// Stored as a closure that calls `stop()` with the correct types.
+    stop_fn: Option<Box<dyn FnOnce(LiveViewSession) + Send>>,
+}
+
+impl CanonCaptureSession {
+    /// Create and start a Canon capture session for the given device.
+    ///
+    /// Opens a camera session, starts live view, and begins polling JPEG
+    /// frames into the JPEG buffer.
+    pub fn new<S: EdsSdkApi + 'static>(
+        device_id: String,
+        sdk: Arc<S>,
+        camera: CameraHandle,
+    ) -> Result<Self, String> {
+        let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
+
+        let live_view = LiveViewSession::start(Arc::clone(&sdk), camera, Arc::clone(&jpeg_buffer))
+            .map_err(|e| format!("failed to start Canon live view: {e}"))?;
+
+        tracing::info!("Started Canon live view for {device_id}");
+
+        // Capture the SDK and camera handle in a closure for clean shutdown
+        let stop_fn: Box<dyn FnOnce(LiveViewSession) + Send> =
+            Box::new(move |session: LiveViewSession| {
+                session.stop(&*sdk, camera);
+            });
+
+        Ok(Self {
+            device_id,
+            live_view: Some(live_view),
+            jpeg_buffer,
+            stop_fn: Some(stop_fn),
+        })
+    }
+
+    /// Get a reference to the JPEG output buffer.
+    pub fn jpeg_buffer(&self) -> &Arc<JpegFrameBuffer> {
+        &self.jpeg_buffer
+    }
+
+    /// Check if the live view session is currently running.
+    pub fn is_running(&self) -> bool {
+        self.live_view
+            .as_ref()
+            .map(|lv| lv.is_running())
+            .unwrap_or(false)
+    }
+
+    /// Return the device ID for this session.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// Stop the Canon capture session. Idempotent.
+    pub fn stop(&mut self) {
+        if let (Some(live_view), Some(stop_fn)) = (self.live_view.take(), self.stop_fn.take()) {
+            stop_fn(live_view);
+            tracing::info!("Stopped Canon live view for {}", self.device_id);
+        }
+    }
+}
+
+/// Unified preview session wrapping either a DirectShow or Canon capture.
+///
+/// The preview commands layer stores these in the sessions map so that
+/// `get_frame` can read JPEG data regardless of the capture backend.
+pub enum PreviewSession {
+    /// DirectShow capture session (RGB frames encoded to JPEG).
+    DirectShow(CaptureSession),
+    /// Canon live view session (native JPEG passthrough).
+    Canon(CanonCaptureSession),
+}
+
+impl PreviewSession {
+    /// Get the JPEG buffer for this session, if available.
+    pub fn jpeg_buffer(&self) -> Option<&Arc<JpegFrameBuffer>> {
+        match self {
+            Self::DirectShow(session) => session.jpeg_buffer(),
+            Self::Canon(session) => Some(session.jpeg_buffer()),
+        }
+    }
+
+    /// Get the raw frame buffer (DirectShow only).
+    pub fn buffer(&self) -> Option<&Arc<FrameBuffer>> {
+        match self {
+            Self::DirectShow(session) => Some(session.buffer()),
+            Self::Canon(_) => None,
+        }
+    }
+
+    /// Check if the session is running.
+    pub fn is_running(&self) -> bool {
+        match self {
+            Self::DirectShow(session) => session.is_running(),
+            Self::Canon(session) => session.is_running(),
+        }
+    }
+
+    /// Return the device ID for this session.
+    pub fn device_id(&self) -> &str {
+        match self {
+            Self::DirectShow(session) => session.device_id(),
+            Self::Canon(session) => session.device_id(),
+        }
+    }
+
+    /// Take a snapshot of diagnostic stats (DirectShow only).
+    pub fn diagnostics(&self) -> DiagnosticSnapshot {
+        match self {
+            Self::DirectShow(session) => session.diagnostics(),
+            Self::Canon(_) => DiagnosticSnapshot::default(),
+        }
+    }
+
+    /// Take a snapshot of encoding stats.
+    pub fn encoding_snapshot(&self) -> Option<EncodingSnapshot> {
+        match self {
+            Self::DirectShow(session) => session.encoding_snapshot(),
+            Self::Canon(_) => None,
+        }
+    }
+
+    /// Stop the session. Idempotent.
+    pub fn stop(&mut self) {
+        match self {
+            Self::DirectShow(session) => session.stop(),
+            Self::Canon(session) => session.stop(),
         }
     }
 }

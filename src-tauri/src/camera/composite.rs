@@ -368,7 +368,8 @@ mod canon_e2e_tests {
         CameraDevice, ControlDescriptor, ControlFlags, ControlId, ControlType, ControlValue,
         DeviceId, FormatDescriptor, HotplugEvent,
     };
-    use std::sync::Arc;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     /// Stub backend representing a DirectShow (or similar) non-Canon camera.
     struct DirectShowStub {
@@ -464,7 +465,8 @@ mod canon_e2e_tests {
             .with_property(0, PROP_ID_ISO_SPEED, 0x48)
             .with_property_desc(0, PROP_ID_ISO_SPEED, vec![0x48, 0x50, 0x58]);
 
-        let canon: Box<dyn CameraBackend> = Box::new(CanonBackend::new(Arc::new(mock)));
+        let handle_map = Arc::new(Mutex::new(HashMap::new()));
+        let canon: Box<dyn CameraBackend> = Box::new(CanonBackend::new(Arc::new(mock), handle_map));
         let ds: Box<dyn CameraBackend> = Box::new(DirectShowStub::new());
 
         CompositeBackend::new(vec![ds, canon])

@@ -29,6 +29,45 @@ use preview::gpu::GpuState;
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
 use settings::store::SettingsStore;
 
+/// Holds an optional Canon SDK reference for creating live view sessions.
+///
+/// Stored as Tauri managed state so the preview commands can access the
+/// SDK when creating Canon capture sessions.
+pub struct CanonSdkState {
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    sdk: Option<Arc<camera::canon::sdk::EdsSdk>>,
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    handle_map: camera::canon::backend::HandleMap,
+    #[cfg(not(all(feature = "canon", target_os = "windows")))]
+    _phantom: (),
+}
+
+impl CanonSdkState {
+    /// Get the Canon SDK reference, if available.
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    pub fn sdk(&self) -> Option<&Arc<camera::canon::sdk::EdsSdk>> {
+        self.sdk.as_ref()
+    }
+
+    /// Get the Canon SDK reference (always None on non-Canon builds).
+    #[cfg(not(all(feature = "canon", target_os = "windows")))]
+    pub fn sdk(&self) -> Option<&Arc<()>> {
+        None
+    }
+
+    /// Look up the CameraHandle for a device_path (e.g. `edsdk://Canon EOS R5`).
+    #[cfg(all(feature = "canon", target_os = "windows"))]
+    pub fn find_handle(&self, device_path: &str) -> Option<camera::canon::api::CameraHandle> {
+        self.handle_map.lock().unwrap().get(device_path).copied()
+    }
+
+    /// Look up the CameraHandle (always None on non-Canon builds).
+    #[cfg(not(all(feature = "canon", target_os = "windows")))]
+    pub fn find_handle(&self, _device_path: &str) -> Option<()> {
+        None
+    }
+}
+
 /// Create the camera backend for the current platform.
 ///
 /// Builds a `CompositeBackend` that merges device lists from all
@@ -36,7 +75,9 @@ use settings::store::SettingsStore;
 /// - `WindowsBackend` (DirectShow) on Windows
 /// - `CanonBackend` when the `canon` feature is enabled
 /// - `DummyBackend` when `DUMMY_CAMERA=1` is set
-fn create_camera_state() -> CameraState {
+///
+/// Also returns a `CanonSdkState` for live view session creation.
+fn create_camera_state() -> (CameraState, CanonSdkState) {
     use camera::composite::CompositeBackend;
 
     let mut backends: Vec<Box<dyn camera::backend::CameraBackend>> = Vec::new();
@@ -53,13 +94,32 @@ fn create_camera_state() -> CameraState {
     }
 
     #[cfg(all(feature = "canon", target_os = "windows"))]
+    let handle_map: camera::canon::backend::HandleMap =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    #[allow(unused_mut)]
+    let mut canon_sdk_state = CanonSdkState {
+        #[cfg(all(feature = "canon", target_os = "windows"))]
+        sdk: None,
+        #[cfg(all(feature = "canon", target_os = "windows"))]
+        handle_map: Arc::clone(&handle_map),
+        #[cfg(not(all(feature = "canon", target_os = "windows")))]
+        _phantom: (),
+    };
+
+    #[cfg(all(feature = "canon", target_os = "windows"))]
     {
         use camera::canon::backend::CanonBackend;
         use camera::canon::sdk::EdsSdk;
 
         match EdsSdk::new() {
             Ok(sdk) => {
-                backends.push(Box::new(CanonBackend::new(std::sync::Arc::new(sdk))));
+                let sdk = Arc::new(sdk);
+                backends.push(Box::new(CanonBackend::new(
+                    Arc::clone(&sdk),
+                    Arc::clone(&handle_map),
+                )));
+                canon_sdk_state.sdk = Some(sdk);
                 tracing::info!("Canon EDSDK backend initialised");
             }
             Err(e) => {
@@ -72,9 +132,12 @@ fn create_camera_state() -> CameraState {
         backends.push(Box::new(camera::dummy::DummyBackend::new()));
     }
 
-    CameraState {
-        backend: Box::new(CompositeBackend::new(backends)),
-    }
+    (
+        CameraState {
+            backend: Box::new(CompositeBackend::new(backends)),
+        },
+        canon_sdk_state,
+    )
 }
 
 /// No-op backend used on platforms without a native camera backend.
@@ -127,6 +190,8 @@ impl camera::backend::CameraBackend for NullBackend {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let (camera_state, canon_sdk_state) = create_camera_state();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_autostart::init(
@@ -135,7 +200,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
-        .manage(create_camera_state())
+        .manage(camera_state)
+        .manage(canon_sdk_state)
         .manage(PreviewState::new())
         .manage(GpuState::new())
         .invoke_handler(tauri::generate_handler![
@@ -203,6 +269,8 @@ pub fn run() {
             // Auto-start preview sessions for all connected cameras
             {
                 let preview_state = app.state::<PreviewState>();
+                #[allow(unused_variables)]
+                let canon_sdk_state = app.state::<CanonSdkState>();
                 let gpu_state = app.state::<GpuState>();
                 let gpu = gpu_state.context();
                 let mut sessions = preview_state.sessions.lock();
@@ -210,6 +278,41 @@ pub fn run() {
                     for device in devices {
                         let device_id = device.id.as_str().to_string();
                         if sessions.contains_key(&device_id) {
+                            continue;
+                        }
+
+                        // Canon live view: device_path starts with "edsdk://"
+                        if device.device_path.starts_with("edsdk://") {
+                            #[cfg(all(feature = "canon", target_os = "windows"))]
+                            {
+                                if let (Some(sdk), Some(handle)) = (
+                                    canon_sdk_state.sdk(),
+                                    canon_sdk_state.find_handle(&device.device_path),
+                                ) {
+                                    match preview::capture::CanonCaptureSession::new(
+                                        device_id.clone(),
+                                        Arc::clone(sdk),
+                                        handle,
+                                    ) {
+                                        Ok(session) => {
+                                            sessions.insert(
+                                                device_id,
+                                                preview::capture::PreviewSession::Canon(session),
+                                            );
+                                            tracing::info!(
+                                                "Auto-started Canon preview for '{}' at startup",
+                                                device.name
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Failed to start Canon preview for '{}': {e}",
+                                                device.name
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                             continue;
                         }
 
@@ -236,7 +339,10 @@ pub fn run() {
                             gpu.clone(),
                             75,
                         );
-                        sessions.insert(device_id, session);
+                        sessions.insert(
+                            device_id,
+                            preview::capture::PreviewSession::DirectShow(session),
+                        );
                         tracing::info!(
                             "Auto-started preview session for '{}' at startup",
                             device.name

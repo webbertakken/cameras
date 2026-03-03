@@ -26,20 +26,28 @@ struct CanonCamera {
     session_open: bool,
 }
 
+/// Shared map from device_path to CameraHandle.
+///
+/// Shared between `CanonBackend` and `CanonSdkState` so the preview
+/// commands can look up handles without going through the backend.
+pub type HandleMap = Arc<Mutex<HashMap<String, CameraHandle>>>;
+
 /// Canon camera backend backed by an `EdsSdkApi` implementation.
 pub struct CanonBackend<S: EdsSdkApi> {
     sdk: Arc<S>,
     cameras: Mutex<HashMap<DeviceId, CanonCamera>>,
     hotplug_watcher: Mutex<Option<CanonHotplugWatcher>>,
+    handle_map: HandleMap,
 }
 
 impl<S: EdsSdkApi> CanonBackend<S> {
     /// Create a new Canon backend with the given SDK implementation.
-    pub fn new(sdk: Arc<S>) -> Self {
+    pub fn new(sdk: Arc<S>, handle_map: HandleMap) -> Self {
         Self {
             sdk,
             cameras: Mutex::new(HashMap::new()),
             hotplug_watcher: Mutex::new(None),
+            handle_map,
         }
     }
 
@@ -154,6 +162,17 @@ impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
         }
 
         *cameras = new_map;
+
+        // Update the shared handle map so preview commands can resolve
+        // device_path → CameraHandle without going through the backend.
+        {
+            let mut hmap = self.handle_map.lock().unwrap();
+            hmap.clear();
+            for cam in cameras.values() {
+                hmap.insert(cam.device.device_path.clone(), cam.handle);
+            }
+        }
+
         Ok(devices)
     }
 
@@ -208,12 +227,16 @@ mod tests {
     use crate::camera::canon::mock::MockEdsSdk;
     use crate::camera::canon::types::PROP_ID_ISO_SPEED;
 
+    fn make_handle_map() -> HandleMap {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
     fn make_backend() -> CanonBackend<MockEdsSdk> {
         let mock = MockEdsSdk::new()
             .with_camera("Canon EOS R5", Some("SER001"))
             .with_property(0, PROP_ID_ISO_SPEED, 0x48)
             .with_property_desc(0, PROP_ID_ISO_SPEED, vec![0x48, 0x50, 0x58]);
-        CanonBackend::new(Arc::new(mock))
+        CanonBackend::new(Arc::new(mock), make_handle_map())
     }
 
     #[test]
@@ -312,7 +335,7 @@ mod tests {
     fn watch_hotplug_starts_watcher() {
         let mock = Arc::new(MockEdsSdk::new().with_camera("Canon EOS R5", Some("SER001")));
         let mock_ref = Arc::clone(&mock);
-        let backend = CanonBackend::new(mock);
+        let backend = CanonBackend::new(mock, make_handle_map());
 
         let result = backend.watch_hotplug(Box::new(|_| {}));
         assert!(result.is_ok());
@@ -339,7 +362,7 @@ mod tests {
     #[test]
     fn empty_backend_enumerates_zero_devices() {
         let mock = MockEdsSdk::new();
-        let backend = CanonBackend::new(Arc::new(mock));
+        let backend = CanonBackend::new(Arc::new(mock), make_handle_map());
         let devices = backend.enumerate_devices().unwrap();
         assert!(devices.is_empty());
     }
@@ -347,7 +370,7 @@ mod tests {
     #[test]
     fn re_enumeration_updates_camera_list() {
         let mock = MockEdsSdk::new().with_cameras(2);
-        let backend = CanonBackend::new(Arc::new(mock));
+        let backend = CanonBackend::new(Arc::new(mock), make_handle_map());
 
         let first = backend.enumerate_devices().unwrap();
         assert_eq!(first.len(), 2);
@@ -359,7 +382,7 @@ mod tests {
     #[test]
     fn enumerate_opens_session_for_each_camera() {
         let mock = Arc::new(MockEdsSdk::new().with_cameras(2));
-        let backend = CanonBackend::new(Arc::clone(&mock));
+        let backend = CanonBackend::new(Arc::clone(&mock), make_handle_map());
 
         backend.enumerate_devices().unwrap();
 
@@ -374,7 +397,7 @@ mod tests {
         let mock = MockEdsSdk::new()
             .with_camera("Canon EOS R5", Some("SER001"))
             .with_property(0, PROP_ID_ISO_SPEED, 0x48);
-        let backend = CanonBackend::new(Arc::new(mock));
+        let backend = CanonBackend::new(Arc::new(mock), make_handle_map());
 
         // Manually insert a camera without a session to simulate pre-session state
         {
@@ -412,7 +435,7 @@ mod tests {
                 "open_session",
                 CameraError::CanonSdkError("device busy".to_string()),
             );
-        let backend = CanonBackend::new(Arc::new(mock));
+        let backend = CanonBackend::new(Arc::new(mock), make_handle_map());
 
         // enumerate still succeeds (camera is discovered), but session is not open
         let devices = backend.enumerate_devices().unwrap();
@@ -429,7 +452,7 @@ mod tests {
         let mock_ref = Arc::clone(&mock);
 
         {
-            let backend = CanonBackend::new(mock);
+            let backend = CanonBackend::new(mock, make_handle_map());
             backend.enumerate_devices().unwrap();
 
             // Session should be open
@@ -454,5 +477,35 @@ mod tests {
 
         let formats = backend.get_formats(&DeviceId::new("canon:SER001")).unwrap();
         assert_eq!(formats.len(), 1);
+    }
+
+    #[test]
+    fn enumerate_populates_shared_handle_map() {
+        let handle_map = make_handle_map();
+        let mock = MockEdsSdk::new()
+            .with_camera("Canon EOS R5", Some("SER001"))
+            .with_camera("Canon EOS R6", Some("SER002"));
+        let backend = CanonBackend::new(Arc::new(mock), Arc::clone(&handle_map));
+
+        backend.enumerate_devices().unwrap();
+
+        let map = handle_map.lock().unwrap();
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("edsdk://Canon EOS R5"));
+        assert!(map.contains_key("edsdk://Canon EOS R6"));
+    }
+
+    #[test]
+    fn handle_map_updates_on_re_enumeration() {
+        let handle_map = make_handle_map();
+        let mock = MockEdsSdk::new().with_cameras(2);
+        let backend = CanonBackend::new(Arc::new(mock), Arc::clone(&handle_map));
+
+        backend.enumerate_devices().unwrap();
+        assert_eq!(handle_map.lock().unwrap().len(), 2);
+
+        // Re-enumerate — map should be refreshed (same devices, still 2 entries)
+        backend.enumerate_devices().unwrap();
+        assert_eq!(handle_map.lock().unwrap().len(), 2);
     }
 }
