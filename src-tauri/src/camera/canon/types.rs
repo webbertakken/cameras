@@ -106,6 +106,8 @@ pub const PROP_ID_EXPOSURE_COMPENSATION: EdsPropertyID = 0x00000406;
 pub const PROP_ID_WHITE_BALANCE: EdsPropertyID = 0x00000403;
 /// Battery level property.
 pub const PROP_ID_BATTERY_LEVEL: EdsPropertyID = 0x00000006;
+/// EVF output device property (used to enable/disable live view).
+pub const PROP_ID_EVF_OUTPUT_DEVICE: EdsPropertyID = 0x00000500;
 
 // --- Camera commands ---
 

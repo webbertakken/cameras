@@ -103,4 +103,10 @@ extern "C" {
 
     /// Release an EDSDK object reference.
     pub fn EdsRelease(ref_: *mut std::ffi::c_void) -> u32;
+
+    /// Get the byte length of a stream.
+    pub fn EdsGetLength(stream: EdsStreamRef, length: *mut u64) -> EdsError;
+
+    /// Get a pointer to the data in a memory stream.
+    pub fn EdsGetPointer(stream: EdsStreamRef, pointer: *mut *mut u8) -> EdsError;
 }
