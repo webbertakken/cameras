@@ -30,6 +30,10 @@ use preview::commands::{
 use preview::gpu::GpuState;
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
 use settings::store::SettingsStore;
+use virtual_camera::commands::{
+    get_virtual_camera_status, start_virtual_camera, stop_virtual_camera,
+};
+use virtual_camera::VirtualCameraState;
 
 /// Holds an optional Canon SDK reference for creating live view sessions.
 ///
@@ -206,6 +210,7 @@ pub fn run() {
         .manage(canon_sdk_state)
         .manage(PreviewState::new())
         .manage(GpuState::new())
+        .manage(VirtualCameraState::new())
         .invoke_handler(tauri::generate_handler![
             list_cameras,
             get_camera_controls,
@@ -224,6 +229,9 @@ pub fn run() {
             list_gpu_adapters,
             get_active_gpu,
             set_gpu_adapter,
+            start_virtual_camera,
+            stop_virtual_camera,
+            get_virtual_camera_status,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
