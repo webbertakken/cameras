@@ -44,7 +44,7 @@
 }
 
 .encoder--hardware {
-  color: #4caf50;
+  color: #66bb6a;
 }
 
 .encoder--software {
@@ -52,7 +52,7 @@
 }
 
 .encoder--cpu {
-  color: #f44336;
+  color: #ef5350;
 }
 
 .diagnostic-overlay__toggle {
