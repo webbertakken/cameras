@@ -25,11 +25,8 @@ fn configure_edsdk() {
     let edsdk_base = manifest_dir
         .join("..")
         .join(".proprietary")
-        .join("Canon")
-        .join("EDSDKv132010W")
-        .join("EDSDKv132010W")
-        .join("Windows")
-        .join("EDSDK_64");
+        .join("canon")
+        .join("windows");
     let lib_dir = edsdk_base.join("Library");
     let dll_dir = edsdk_base.join("Dll");
 
@@ -39,7 +36,7 @@ fn configure_edsdk() {
         println!(
             "cargo:warning=Canon EDSDK not found at {}. \
              Build will succeed but linking with --features canon will fail. \
-             Place the EDSDK files in .proprietary/Canon/EDSDKv132010W/EDSDKv132010W/Windows/EDSDK_64/",
+             Place the EDSDK files in .proprietary/canon/windows/",
             lib_file.display()
         );
         return;

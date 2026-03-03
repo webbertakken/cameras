@@ -51,13 +51,13 @@ jobs:
         if: matrix.target == 'windows-x64'
         shell: pwsh
         run: |
-          $sdkBase = ".proprietary/Canon/EDSDKv132010W/EDSDKv132010W/Windows/EDSDK_64"
+          $sdkBase = ".proprietary/canon/windows"
           New-Item -ItemType Directory -Force -Path "$sdkBase/Library"
           New-Item -ItemType Directory -Force -Path "$sdkBase/Dll"
 
-          gcloud storage cp gs://cameras-ci-sdk/canon-edsdk/Library/EDSDK.lib "$sdkBase/Library/"
-          gcloud storage cp gs://cameras-ci-sdk/canon-edsdk/Dll/EDSDK.dll "$sdkBase/Dll/"
-          gcloud storage cp gs://cameras-ci-sdk/canon-edsdk/Dll/EdsImage.dll "$sdkBase/Dll/"
+          gcloud storage cp gs://cameras-ci-sdk/canon/windows/Library/EDSDK.lib "$sdkBase/Library/"
+          gcloud storage cp gs://cameras-ci-sdk/canon/windows/Dll/EDSDK.dll "$sdkBase/Dll/"
+          gcloud storage cp gs://cameras-ci-sdk/canon/windows/Dll/EdsImage.dll "$sdkBase/Dll/"
 
       - name: Install system dependencies (Linux)
         if: startsWith(matrix.os, 'ubuntu')
