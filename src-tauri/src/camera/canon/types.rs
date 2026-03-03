@@ -91,6 +91,22 @@ pub const EDS_ERR_TAKE_PICTURE_AF_NG: EdsError = 0x00008D01;
 pub const EDS_ERR_COMM_DISCONNECTED: EdsError = 0x000000C1;
 /// Invalid handle passed to the SDK.
 pub const EDS_ERR_INVALID_HANDLE: EdsError = 0x00000061;
+/// The device is not found.
+pub const EDS_ERR_DEVICE_NOT_FOUND: EdsError = 0x00000080;
+/// Device is not launched/ready.
+pub const EDS_ERR_DEVICE_NOT_RELEASED: EdsError = 0x000000A2;
+/// USB device lock error.
+pub const EDS_ERR_USB_DEVICE_LOCK_ERROR: EdsError = 0x000000D0;
+/// USB device unlock error.
+pub const EDS_ERR_USB_DEVICE_UNLOCK_ERROR: EdsError = 0x000000D1;
+/// EVF not activated.
+pub const EDS_ERR_EVF_NOT_ACTIVATED: EdsError = 0x0000A102;
+/// EVF selection fault.
+pub const EDS_ERR_EVF_SELECTION_FAULT: EdsError = 0x0000A103;
+/// Stream I/O error.
+pub const EDS_ERR_STREAM_IO_ERROR: EdsError = 0x00000020;
+/// Session already open.
+pub const EDS_ERR_SESSION_ALREADY_OPEN: EdsError = 0x00002114;
 
 // --- Property IDs ---
 
@@ -108,6 +124,13 @@ pub const PROP_ID_WHITE_BALANCE: EdsPropertyID = 0x00000403;
 pub const PROP_ID_BATTERY_LEVEL: EdsPropertyID = 0x00000006;
 /// EVF output device property (used to enable/disable live view).
 pub const PROP_ID_EVF_OUTPUT_DEVICE: EdsPropertyID = 0x00000500;
+
+// --- EVF output device flags ---
+
+/// Enable EVF output on the camera TFT/LCD.
+pub const EVF_OUTPUT_DEVICE_TFT: u32 = 0x01;
+/// Enable EVF output to the PC (live view streaming via USB).
+pub const EVF_OUTPUT_DEVICE_PC: u32 = 0x02;
 
 // --- Camera commands ---
 
@@ -135,13 +158,21 @@ pub fn error_description(code: EdsError) -> &'static str {
         EDS_ERR_OK => "success",
         EDS_ERR_INTERNAL_ERROR => "EDSDK internal error",
         EDS_ERR_MEM_ALLOC_FAILED => "memory allocation failed",
-        EDS_ERR_DEVICE_BUSY => "camera is busy — retry shortly",
-        EDS_ERR_SESSION_NOT_OPEN => "no camera session is open",
-        EDS_ERR_OBJECT_NOTREADY => "live view data not ready yet",
-        EDS_ERR_PROPERTIES_UNAVAILABLE => "property not available on this camera",
-        EDS_ERR_TAKE_PICTURE_AF_NG => "autofocus failed during capture",
-        EDS_ERR_COMM_DISCONNECTED => "camera disconnected",
+        EDS_ERR_STREAM_IO_ERROR => "stream I/O error",
         EDS_ERR_INVALID_HANDLE => "invalid camera handle",
+        EDS_ERR_DEVICE_NOT_FOUND => "device not found",
+        EDS_ERR_DEVICE_BUSY => "camera is busy — retry shortly",
+        EDS_ERR_DEVICE_NOT_RELEASED => "device not released",
+        EDS_ERR_COMM_DISCONNECTED => "camera disconnected",
+        EDS_ERR_USB_DEVICE_LOCK_ERROR => "USB device lock error",
+        EDS_ERR_USB_DEVICE_UNLOCK_ERROR => "USB device unlock error",
+        EDS_ERR_SESSION_NOT_OPEN => "no camera session is open",
+        EDS_ERR_SESSION_ALREADY_OPEN => "session already open",
+        EDS_ERR_TAKE_PICTURE_AF_NG => "autofocus failed during capture",
+        EDS_ERR_PROPERTIES_UNAVAILABLE => "property not available on this camera",
+        EDS_ERR_OBJECT_NOTREADY => "live view data not ready yet",
+        EDS_ERR_EVF_NOT_ACTIVATED => "EVF not activated",
+        EDS_ERR_EVF_SELECTION_FAULT => "EVF selection fault",
         _ => "unknown EDSDK error",
     }
 }

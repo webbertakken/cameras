@@ -94,7 +94,42 @@ impl LiveViewSession {
     }
 }
 
+/// RAII guard for COM on the live view thread.
+#[cfg(target_os = "windows")]
+struct LiveViewComGuard {
+    owns_init: bool,
+}
+
+#[cfg(target_os = "windows")]
+impl LiveViewComGuard {
+    fn init() -> Self {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        if hr.is_err() {
+            tracing::debug!("Live view thread: COM already initialised (hr={hr:?}), continuing");
+            Self { owns_init: false }
+        } else {
+            tracing::debug!("Live view thread: COM STA initialised");
+            Self { owns_init: true }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for LiveViewComGuard {
+    fn drop(&mut self) {
+        if self.owns_init {
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
+        }
+    }
+}
+
 /// Polling loop that runs on the live view thread.
+///
+/// Initialises COM STA on this thread (EDSDK requires COM on every calling
+/// thread) before entering the download loop.
 fn poll_live_view<S: EdsSdkApi>(
     sdk: &S,
     camera: CameraHandle,
@@ -102,6 +137,10 @@ fn poll_live_view<S: EdsSdkApi>(
     running: &AtomicBool,
     interval: Duration,
 ) {
+    // EDSDK requires COM STA on every thread that calls it.
+    #[cfg(target_os = "windows")]
+    let _com = LiveViewComGuard::init();
+
     while running.load(Ordering::Relaxed) {
         match sdk.download_evf_image(camera) {
             Ok(jpeg_data) => {
@@ -116,8 +155,10 @@ fn poll_live_view<S: EdsSdkApi>(
             }
             Err(e) => {
                 let msg = e.to_string();
-                // OBJECT_NOTREADY is expected during live view startup
-                if !msg.contains("not ready") && !msg.contains("not active") {
+                // These errors are expected during live view startup:
+                // - OBJECT_NOTREADY: camera hasn't produced first frame yet
+                // - EVF_NOT_ACTIVATED: EVF is still warming up after enable
+                if !msg.contains("not ready") && !msg.contains("not activated") {
                     tracing::debug!("Canon live view frame error: {e}");
                 }
             }

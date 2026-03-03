@@ -213,13 +213,16 @@ impl EdsSdkApi for EdsSdk {
 
     fn open_session(&self, camera: CameraHandle) -> Result<()> {
         let camera_ref = self.get_camera_ref(camera)?;
+        tracing::debug!("EdsOpenSession: camera={}, ref={:?}", camera.0, camera_ref);
         let err = unsafe { ffi::EdsOpenSession(camera_ref) };
         if err != EDS_ERR_OK {
             return Err(CameraError::CanonSdkError(format!(
-                "EdsOpenSession failed: {}",
-                error_description(err)
+                "EdsOpenSession failed: {} (0x{:08X})",
+                error_description(err),
+                err
             )));
         }
+        tracing::debug!("EdsOpenSession succeeded for camera {}", camera.0);
         Ok(())
     }
 
@@ -253,8 +256,9 @@ impl EdsSdkApi for EdsSdk {
     fn start_live_view(&self, camera: CameraHandle) -> Result<()> {
         let camera_ref = self.get_camera_ref(camera)?;
 
-        // Enable EVF output on the camera
-        let evf_mode: u32 = 1;
+        // Enable EVF output to the PC for live view streaming.
+        // kEdsEvfOutputDevice_PC (0x02) routes frames over USB.
+        let evf_mode: u32 = EVF_OUTPUT_DEVICE_PC;
         let err = unsafe {
             ffi::EdsSetPropertyData(
                 camera_ref,
@@ -266,8 +270,9 @@ impl EdsSdkApi for EdsSdk {
         };
         if err != EDS_ERR_OK {
             return Err(CameraError::CanonSdkError(format!(
-                "start_live_view (set EVF output) failed: {}",
-                error_description(err)
+                "start_live_view (set EVF output) failed: {} (0x{:08X})",
+                error_description(err),
+                err
             )));
         }
         Ok(())
@@ -327,8 +332,9 @@ impl EdsSdkApi for EdsSdk {
                 ffi::EdsRelease(evf_image);
                 ffi::EdsRelease(stream);
                 return Err(CameraError::CanonSdkError(format!(
-                    "EdsDownloadEvfImage failed: {}",
-                    error_description(err)
+                    "EdsDownloadEvfImage failed: {} (0x{:08X})",
+                    error_description(err),
+                    err
                 )));
             }
 

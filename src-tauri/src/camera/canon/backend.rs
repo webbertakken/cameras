@@ -4,6 +4,7 @@
 //! production uses the real `EdsSdk` wrapper.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::camera::backend::CameraBackend;
@@ -36,6 +37,12 @@ pub type HandleMap = Arc<Mutex<HashMap<String, CameraHandle>>>;
 pub struct CanonBackend<S: EdsSdkApi> {
     sdk: Arc<S>,
     cameras: Mutex<HashMap<DeviceId, CanonCamera>>,
+    /// Cached device list from the last successful enumeration.
+    cached_devices: Mutex<Vec<CameraDevice>>,
+    /// When `true`, `enumerate_devices` performs a full re-discovery.
+    /// Set on first call and when the hotplug watcher detects changes.
+    /// Shared with the hotplug watcher via `Arc`.
+    dirty: Arc<AtomicBool>,
     hotplug_watcher: Mutex<Option<CanonHotplugWatcher>>,
     handle_map: HandleMap,
 }
@@ -46,6 +53,8 @@ impl<S: EdsSdkApi> CanonBackend<S> {
         Self {
             sdk,
             cameras: Mutex::new(HashMap::new()),
+            cached_devices: Mutex::new(Vec::new()),
+            dirty: Arc::new(AtomicBool::new(true)), // first call always discovers
             hotplug_watcher: Mutex::new(None),
             handle_map,
         }
@@ -120,19 +129,35 @@ impl<S: EdsSdkApi> CanonBackend<S> {
 
 impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
     fn enumerate_devices(&self) -> Result<Vec<CameraDevice>> {
-        let discovered = discover_cameras(&*self.sdk)?;
-        let mut cameras = self.cameras.lock().unwrap();
+        // Only perform a full re-discovery when the `dirty` flag is set
+        // (first call, or after a hotplug event). Repeated enumerate calls
+        // from the frontend or hotplug bridge return the cached list,
+        // avoiding destructive session close/re-open cycles that disrupt
+        // active live view sessions.
+        if !self.dirty.swap(false, Ordering::Relaxed) {
+            return Ok(self.cached_devices.lock().unwrap().clone());
+        }
 
-        // Close sessions for cameras that are no longer present
-        let new_ids: std::collections::HashSet<_> =
-            discovered.iter().map(|(_, d)| d.id.clone()).collect();
-        for (_, cam) in cameras.iter() {
-            if cam.session_open && !new_ids.contains(&cam.device.id) {
-                if let Err(e) = self.sdk.close_session(cam.handle) {
-                    tracing::warn!("Failed to close session for {}: {e}", cam.device.name);
+        // Close ALL open sessions before re-enumerating. camera_list()
+        // releases stored refs and obtains new ones — but EDSDK tracks
+        // sessions per camera, not per ref. Calling EdsOpenSession on a
+        // new ref while an old session is still active returns
+        // EDS_ERR_INTERNAL_ERROR (0x00000002).
+        {
+            let cameras = self.cameras.lock().unwrap();
+            for (_, cam) in cameras.iter() {
+                if cam.session_open {
+                    if let Err(e) = self.sdk.close_session(cam.handle) {
+                        tracing::debug!(
+                            "Close session before re-enum for {}: {e}",
+                            cam.device.name
+                        );
+                    }
                 }
             }
         }
+
+        let discovered = discover_cameras(&*self.sdk)?;
 
         // Build new map, opening sessions for each discovered camera
         let mut new_map = HashMap::new();
@@ -161,6 +186,7 @@ impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
             );
         }
 
+        let mut cameras = self.cameras.lock().unwrap();
         *cameras = new_map;
 
         // Update the shared handle map so preview commands can resolve
@@ -173,11 +199,21 @@ impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
             }
         }
 
+        // Cache the device list for subsequent non-dirty calls
+        *self.cached_devices.lock().unwrap() = devices.clone();
+
         Ok(devices)
     }
 
     fn watch_hotplug(&self, callback: Box<dyn Fn(HotplugEvent) + Send>) -> Result<()> {
-        let watcher = CanonHotplugWatcher::start(Arc::clone(&self.sdk), callback);
+        // Wrap the callback: set dirty before forwarding so the next
+        // enumerate_devices() call performs a full re-discovery.
+        let dirty = Arc::clone(&self.dirty);
+        let wrapped = Box::new(move |event: HotplugEvent| {
+            dirty.store(true, Ordering::Relaxed);
+            callback(event);
+        });
+        let watcher = CanonHotplugWatcher::start(Arc::clone(&self.sdk), wrapped);
         let mut guard = self.hotplug_watcher.lock().unwrap();
         *guard = Some(watcher);
         Ok(())

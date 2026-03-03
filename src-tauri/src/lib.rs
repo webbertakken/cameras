@@ -251,18 +251,21 @@ pub fn run() {
                 store: Arc::clone(&store),
             });
 
-            // Auto-apply saved settings to connected cameras
+            // Enumerate cameras once for both settings restore and preview auto-start.
+            // Calling enumerate_devices() multiple times causes unnecessary EDSDK
+            // session close/re-open cycles which can fail on some cameras.
             let camera_state = app.state::<CameraState>();
-            if let Ok(devices) = camera_state.backend.enumerate_devices() {
-                for device in &devices {
-                    let applied = settings::commands::apply_saved_settings(
-                        camera_state.backend.as_ref(),
-                        &store,
-                        device.id.as_str(),
-                    );
-                    if !applied.is_empty() {
-                        tracing::info!("Restored {} settings for '{}'", applied.len(), device.name);
-                    }
+            let devices = camera_state.backend.enumerate_devices().unwrap_or_default();
+
+            // Auto-apply saved settings to connected cameras
+            for device in &devices {
+                let applied = settings::commands::apply_saved_settings(
+                    camera_state.backend.as_ref(),
+                    &store,
+                    device.id.as_str(),
+                );
+                if !applied.is_empty() {
+                    tracing::info!("Restored {} settings for '{}'", applied.len(), device.name);
                 }
             }
 
@@ -274,80 +277,78 @@ pub fn run() {
                 let gpu_state = app.state::<GpuState>();
                 let gpu = gpu_state.context();
                 let mut sessions = preview_state.sessions.lock();
-                if let Ok(ref devices) = camera_state.backend.enumerate_devices() {
-                    for device in devices {
-                        let device_id = device.id.as_str().to_string();
-                        if sessions.contains_key(&device_id) {
-                            continue;
-                        }
+                for device in &devices {
+                    let device_id = device.id.as_str().to_string();
+                    if sessions.contains_key(&device_id) {
+                        continue;
+                    }
 
-                        // Canon live view: device_path starts with "edsdk://"
-                        if device.device_path.starts_with("edsdk://") {
-                            #[cfg(all(feature = "canon", target_os = "windows"))]
-                            {
-                                if let (Some(sdk), Some(handle)) = (
-                                    canon_sdk_state.sdk(),
-                                    canon_sdk_state.find_handle(&device.device_path),
+                    // Canon live view: device_path starts with "edsdk://"
+                    if device.device_path.starts_with("edsdk://") {
+                        #[cfg(all(feature = "canon", target_os = "windows"))]
+                        {
+                            if let (Some(sdk), Some(handle)) = (
+                                canon_sdk_state.sdk(),
+                                canon_sdk_state.find_handle(&device.device_path),
+                            ) {
+                                match preview::capture::CanonCaptureSession::new(
+                                    device_id.clone(),
+                                    Arc::clone(sdk),
+                                    handle,
                                 ) {
-                                    match preview::capture::CanonCaptureSession::new(
-                                        device_id.clone(),
-                                        Arc::clone(sdk),
-                                        handle,
-                                    ) {
-                                        Ok(session) => {
-                                            sessions.insert(
-                                                device_id,
-                                                preview::capture::PreviewSession::Canon(session),
-                                            );
-                                            tracing::info!(
-                                                "Auto-started Canon preview for '{}' at startup",
-                                                device.name
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "Failed to start Canon preview for '{}': {e}",
-                                                device.name
-                                            );
-                                        }
+                                    Ok(session) => {
+                                        sessions.insert(
+                                            device_id,
+                                            preview::capture::PreviewSession::Canon(session),
+                                        );
+                                        tracing::info!(
+                                            "Auto-started Canon preview for '{}' at startup",
+                                            device.name
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to start Canon preview for '{}': {e}",
+                                            device.name
+                                        );
                                     }
                                 }
                             }
-                            continue;
                         }
-
-                        let on_error = {
-                            let app_handle = app.handle().clone();
-                            std::sync::Arc::new(move |dev_id: &str, error: &str| {
-                                let _ = app_handle.emit(
-                                    "preview-error",
-                                    preview::capture::PreviewErrorPayload {
-                                        device_id: dev_id.to_string(),
-                                        error: camera::error::humanise_error(error),
-                                    },
-                                );
-                            }) as preview::capture::ErrorCallback
-                        };
-
-                        let session = preview::capture::CaptureSession::new(
-                            device.device_path.clone(),
-                            device.name.clone(),
-                            640,
-                            480,
-                            30.0,
-                            Some(on_error),
-                            gpu.clone(),
-                            75,
-                        );
-                        sessions.insert(
-                            device_id,
-                            preview::capture::PreviewSession::DirectShow(session),
-                        );
-                        tracing::info!(
-                            "Auto-started preview session for '{}' at startup",
-                            device.name
-                        );
+                        continue;
                     }
+
+                    let on_error = {
+                        let app_handle = app.handle().clone();
+                        std::sync::Arc::new(move |dev_id: &str, error: &str| {
+                            let _ = app_handle.emit(
+                                "preview-error",
+                                preview::capture::PreviewErrorPayload {
+                                    device_id: dev_id.to_string(),
+                                    error: camera::error::humanise_error(error),
+                                },
+                            );
+                        }) as preview::capture::ErrorCallback
+                    };
+
+                    let session = preview::capture::CaptureSession::new(
+                        device.device_path.clone(),
+                        device.name.clone(),
+                        640,
+                        480,
+                        30.0,
+                        Some(on_error),
+                        gpu.clone(),
+                        75,
+                    );
+                    sessions.insert(
+                        device_id,
+                        preview::capture::PreviewSession::DirectShow(session),
+                    );
+                    tracing::info!(
+                        "Auto-started preview session for '{}' at startup",
+                        device.name
+                    );
                 }
             }
 

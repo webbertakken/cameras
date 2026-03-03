@@ -411,8 +411,9 @@ pub struct CanonCaptureSession {
 impl CanonCaptureSession {
     /// Create and start a Canon capture session for the given device.
     ///
-    /// Opens a camera session, starts live view, and begins polling JPEG
-    /// frames into the JPEG buffer.
+    /// The caller must ensure that a camera session is already open (managed
+    /// by `CanonBackend::enumerate_devices`). This method only starts live
+    /// view and begins polling JPEG frames into the JPEG buffer.
     pub fn new<S: EdsSdkApi + 'static>(
         device_id: String,
         sdk: Arc<S>,
