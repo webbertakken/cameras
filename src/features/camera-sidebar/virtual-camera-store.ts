@@ -17,20 +17,25 @@ export const useVirtualCameraStore = create<VirtualCameraStore>((set, get) => ({
 
   toggle: async (deviceId) => {
     const { activeDevices } = get()
-    if (activeDevices.has(deviceId)) {
-      await stopVirtualCamera(deviceId)
-      set((state) => {
-        const next = new Set(state.activeDevices)
-        next.delete(deviceId)
-        return { activeDevices: next }
-      })
-    } else {
-      await startVirtualCamera(deviceId)
-      set((state) => {
-        const next = new Set(state.activeDevices)
-        next.add(deviceId)
-        return { activeDevices: next }
-      })
+    try {
+      if (activeDevices.has(deviceId)) {
+        await stopVirtualCamera(deviceId)
+        set((state) => {
+          const next = new Set(state.activeDevices)
+          next.delete(deviceId)
+          return { activeDevices: next }
+        })
+      } else {
+        await startVirtualCamera(deviceId)
+        set((state) => {
+          const next = new Set(state.activeDevices)
+          next.add(deviceId)
+          return { activeDevices: next }
+        })
+      }
+    } catch (err) {
+      console.error(`Virtual camera toggle failed for ${deviceId}:`, err)
+      throw err
     }
   },
 

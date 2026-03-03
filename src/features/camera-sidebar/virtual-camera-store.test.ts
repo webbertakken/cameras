@@ -45,6 +45,36 @@ describe('useVirtualCameraStore', () => {
     expect(useVirtualCameraStore.getState().isActive('cam-1')).toBe(false)
   })
 
+  it('toggle does not update state when start fails', async () => {
+    ;(startVirtualCamera as Mock).mockRejectedValue(new Error('sink failed'))
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(useVirtualCameraStore.getState().toggle('cam-1')).rejects.toThrow('sink failed')
+
+    expect(useVirtualCameraStore.getState().isActive('cam-1')).toBe(false)
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Virtual camera toggle failed'),
+      expect.any(Error),
+    )
+    consoleSpy.mockRestore()
+  })
+
+  it('toggle does not update state when stop fails', async () => {
+    ;(stopVirtualCamera as Mock).mockRejectedValue(new Error('release failed'))
+    useVirtualCameraStore.setState({ activeDevices: new Set(['cam-1']) })
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(useVirtualCameraStore.getState().toggle('cam-1')).rejects.toThrow('release failed')
+
+    // Device should still be marked active since stop failed
+    expect(useVirtualCameraStore.getState().isActive('cam-1')).toBe(true)
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Virtual camera toggle failed'),
+      expect.any(Error),
+    )
+    consoleSpy.mockRestore()
+  })
+
   it('setActive adds and removes device IDs', () => {
     const store = useVirtualCameraStore.getState()
 

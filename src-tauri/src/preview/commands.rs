@@ -12,6 +12,7 @@ use crate::camera::error::humanise_error;
 use crate::camera::types::{CameraDevice, DeviceId};
 use crate::diagnostics::stats::DiagnosticSnapshot;
 use crate::preview::encode_worker::EncodingSnapshot;
+use crate::virtual_camera::VirtualCameraState;
 use crate::CanonSdkState;
 
 /// Cached JPEG result for a single device, keyed by frame sequence number.
@@ -315,6 +316,8 @@ pub fn start_preview_for_device(app: &AppHandle, device_id: &str) {
 }
 
 /// Stop and clean up a capture session for a disconnected device.
+///
+/// Also stops the virtual camera sink for this device, if active.
 pub fn stop_preview_for_device(app: &AppHandle, device_id: &str) {
     let preview_state = match app.try_state::<PreviewState>() {
         Some(s) => s,
@@ -327,15 +330,30 @@ pub fn stop_preview_for_device(app: &AppHandle, device_id: &str) {
         tracing::info!("Stopped preview session for disconnected device: {device_id}");
     }
     preview_state.jpeg_cache.lock().remove(device_id);
+
+    // Stop virtual camera sink if active
+    if let Some(vcam_state) = app.try_state::<VirtualCameraState>() {
+        let _ = vcam_state.stop(device_id);
+    }
 }
 
 /// Stop a camera preview session. Idempotent.
+///
+/// Also stops the virtual camera sink for this device, if active (spec:
+/// "When a preview session is stopped while its virtual camera is active,
+/// the virtual camera sink SHALL automatically stop.").
 #[tauri::command]
-pub async fn stop_preview(state: State<'_, PreviewState>, device_id: String) -> Result<(), String> {
+pub async fn stop_preview(
+    state: State<'_, PreviewState>,
+    vcam_state: State<'_, VirtualCameraState>,
+    device_id: String,
+) -> Result<(), String> {
     let mut sessions = state.sessions.lock();
     if let Some(mut session) = sessions.remove(&device_id) {
         session.stop();
     }
+    // Stop virtual camera sink if active
+    let _ = vcam_state.stop(&device_id);
     // Remove cached JPEG for this device
     state.jpeg_cache.lock().remove(&device_id);
     Ok(())
@@ -524,10 +542,21 @@ pub async fn set_gpu_adapter(
     Ok(state.set_adapter(adapter_index))
 }
 
+/// List device IDs that have active preview sessions.
+///
+/// Used by the frontend to know which cameras have previews running
+/// (e.g. for enabling/disabling the virtual camera toggle).
+#[tauri::command]
+pub async fn get_active_previews(state: State<'_, PreviewState>) -> Result<Vec<String>, String> {
+    let sessions = state.sessions.lock();
+    Ok(sessions.keys().cloned().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::preview::capture::Frame;
+    use crate::virtual_camera::{VirtualCameraSink, VirtualCameraState};
 
     fn make_preview_state() -> PreviewState {
         PreviewState::new()
@@ -906,5 +935,137 @@ mod tests {
         );
         // The get_thumbnail command calls session.buffer() which returns None for Canon,
         // resulting in "thumbnails not available for Canon live view" error.
+    }
+
+    /// Mock sink for testing virtual camera auto-stop.
+    struct MockVcamSink {
+        running: bool,
+    }
+
+    impl MockVcamSink {
+        fn new() -> Self {
+            Self { running: false }
+        }
+    }
+
+    impl VirtualCameraSink for MockVcamSink {
+        fn start(&mut self) -> Result<(), String> {
+            self.running = true;
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), String> {
+            self.running = false;
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            self.running
+        }
+    }
+
+    #[test]
+    fn stop_preview_also_stops_virtual_camera() {
+        let state = make_preview_state();
+        let vcam_state = VirtualCameraState::new();
+
+        // Set up a preview session and an active virtual camera
+        {
+            let mut sessions = state.sessions.lock();
+            let session = make_ds_session("cam-1", 640, 480);
+            sessions.insert("cam-1".to_string(), PreviewSession::DirectShow(session));
+        }
+        vcam_state
+            .start("cam-1".to_string(), Box::new(MockVcamSink::new()))
+            .unwrap();
+        assert!(vcam_state.is_active("cam-1"));
+
+        // Simulate stop_preview logic: remove session, stop vcam, clear cache
+        {
+            let mut sessions = state.sessions.lock();
+            if let Some(mut s) = sessions.remove("cam-1") {
+                s.stop();
+            }
+        }
+        let _ = vcam_state.stop("cam-1");
+        state.jpeg_cache.lock().remove("cam-1");
+
+        assert!(!state.sessions.lock().contains_key("cam-1"));
+        assert!(
+            !vcam_state.is_active("cam-1"),
+            "vcam should auto-stop when preview stops"
+        );
+    }
+
+    #[test]
+    fn stop_preview_without_vcam_is_ok() {
+        let state = make_preview_state();
+        let vcam_state = VirtualCameraState::new();
+
+        {
+            let mut sessions = state.sessions.lock();
+            let session = make_ds_session("cam-1", 640, 480);
+            sessions.insert("cam-1".to_string(), PreviewSession::DirectShow(session));
+        }
+
+        // Stop preview when no vcam is active — should not error
+        {
+            let mut sessions = state.sessions.lock();
+            if let Some(mut s) = sessions.remove("cam-1") {
+                s.stop();
+            }
+        }
+        let result = vcam_state.stop("cam-1");
+        assert!(result.is_ok(), "stopping non-existent vcam should succeed");
+    }
+
+    #[test]
+    fn get_active_previews_returns_session_keys() {
+        let state = make_preview_state();
+
+        // Empty initially
+        let keys: Vec<String> = state.sessions.lock().keys().cloned().collect();
+        assert!(keys.is_empty());
+
+        // Add sessions
+        {
+            let mut sessions = state.sessions.lock();
+            sessions.insert(
+                "cam-1".to_string(),
+                PreviewSession::DirectShow(make_ds_session("cam-1", 640, 480)),
+            );
+            sessions.insert(
+                "cam-2".to_string(),
+                PreviewSession::DirectShow(make_ds_session("cam-2", 640, 480)),
+            );
+        }
+
+        let mut keys: Vec<String> = state.sessions.lock().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["cam-1", "cam-2"]);
+    }
+
+    #[test]
+    fn get_active_previews_reflects_stopped_sessions() {
+        let state = make_preview_state();
+
+        {
+            let mut sessions = state.sessions.lock();
+            sessions.insert(
+                "cam-1".to_string(),
+                PreviewSession::DirectShow(make_ds_session("cam-1", 640, 480)),
+            );
+        }
+
+        assert_eq!(state.sessions.lock().len(), 1);
+
+        // Stop and remove
+        {
+            let mut sessions = state.sessions.lock();
+            if let Some(mut s) = sessions.remove("cam-1") {
+                s.stop();
+            }
+        }
+
+        let keys: Vec<String> = state.sessions.lock().keys().cloned().collect();
+        assert!(keys.is_empty());
     }
 }
