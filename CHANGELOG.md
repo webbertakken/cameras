@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0](https://github.com/webbertakken/cameras/compare/v0.6.0...v0.7.0) (2026-03-03)
+
+
+### Features
+
+* **camera:** add Canon EDSDK integration with composite backend ([#52](https://github.com/webbertakken/cameras/issues/52)) ([b96a523](https://github.com/webbertakken/cameras/commit/b96a523c8b61d019dd55a55ff199e008013c5480))
+* **canon:** wire startup, CI test step, and e2e smoke test ([#50](https://github.com/webbertakken/cameras/issues/50), [#52](https://github.com/webbertakken/cameras/issues/52), [#53](https://github.com/webbertakken/cameras/issues/53)) ([#54](https://github.com/webbertakken/cameras/issues/54)) ([f53e2ce](https://github.com/webbertakken/cameras/commit/f53e2ceb2b02b80178f68ed7ce299e831ea6b5f6))
+* **preview:** add GPU-accelerated frame processing via WGPU ([#57](https://github.com/webbertakken/cameras/issues/57)) ([395cd47](https://github.com/webbertakken/cameras/commit/395cd47a2404c021c0a2b894c1b50763a7b909a7))
+
+
+### Bug fixes
+
+* **preview:** add startup grace period and stabilise lifecycle ([#53](https://github.com/webbertakken/cameras/issues/53)) ([2a2295e](https://github.com/webbertakken/cameras/commit/2a2295eafeb4adc4d4bada904804e6271d43f4b7))
+* **preview:** decouple capture sessions from UI selection ([#55](https://github.com/webbertakken/cameras/issues/55)) ([d90ee43](https://github.com/webbertakken/cameras/commit/d90ee43119b01e1e239f6d83c748b1036132890c))
+* **preview:** strict mode, watchdog timer, and OBS Virtual Camera ([#49](https://github.com/webbertakken/cameras/issues/49)) ([e2df663](https://github.com/webbertakken/cameras/commit/e2df663d31abf2adde4abca2907ac6bfc5dc93a5))
+* runtime bugs — preview timeout, filter cache, failure detection, error messages ([#48](https://github.com/webbertakken/cameras/issues/48)) ([eb255a7](https://github.com/webbertakken/cameras/commit/eb255a79acb99505f66ba9c397c5fc9a0300b6f8))
+
+
+### Maintenance
+
+* add chainlink issue tracking ([#51](https://github.com/webbertakken/cameras/issues/51)) ([dedcd7d](https://github.com/webbertakken/cameras/commit/dedcd7da11d3db8a9c98195586ee20df978505ce))
+* gitignore AMBIGUITIES.md and CHANGELOG.md ([#56](https://github.com/webbertakken/cameras/issues/56)) ([1845f47](https://github.com/webbertakken/cameras/commit/1845f47c07944ccfc3c044e8d5831a05c40cd4d7))
+
 ## [0.6.0](https://github.com/webbertakken/cameras/compare/v0.5.0...v0.6.0) (2026-02-28)
 
 ### Fixed
