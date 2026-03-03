@@ -73,6 +73,11 @@ jobs:
               ;;
           esac
 
+          # Ensure all SDK directories exist so Tauri resource globs resolve on every platform
+          mkdir -p .proprietary/canon/windows/Dll
+          mkdir -p .proprietary/canon/linux-x64
+          mkdir -p .proprietary/canon/linux-arm64
+
       - name: Install system dependencies (Linux)
         if: startsWith(matrix.os, 'ubuntu')
         run: |

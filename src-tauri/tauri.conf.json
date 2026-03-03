@@ -32,6 +32,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../.proprietary/canon/windows/Dll/*.dll": "./",
+      "../.proprietary/canon/linux-*/*.so": "./"
+    },
+    "macOS": {
+      "frameworks": ["../.proprietary/canon/macos/EDSDK.framework"]
+    }
   }
 }
