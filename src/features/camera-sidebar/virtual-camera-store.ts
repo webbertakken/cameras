@@ -17,8 +17,11 @@ export const useVirtualCameraStore = create<VirtualCameraStore>((set, get) => ({
 
   toggle: async (deviceId) => {
     const { activeDevices } = get()
+    const wasActive = activeDevices.has(deviceId)
+    const action = wasActive ? 'stop' : 'start'
     try {
-      if (activeDevices.has(deviceId)) {
+      console.info(`[vcam-store] Sending IPC '${action}_virtual_camera' for '${deviceId}'`)
+      if (wasActive) {
         await stopVirtualCamera(deviceId)
         set((state) => {
           const next = new Set(state.activeDevices)
@@ -33,8 +36,9 @@ export const useVirtualCameraStore = create<VirtualCameraStore>((set, get) => ({
           return { activeDevices: next }
         })
       }
+      console.info(`[vcam-store] IPC '${action}_virtual_camera' succeeded for '${deviceId}'`)
     } catch (err) {
-      console.error(`Virtual camera toggle failed for ${deviceId}:`, err)
+      console.error(`[vcam-store] IPC '${action}_virtual_camera' failed for '${deviceId}':`, err)
       throw err
     }
   },

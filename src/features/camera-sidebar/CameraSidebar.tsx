@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import type { CameraDevice } from '../../types/camera'
+import { useToastStore } from '../notifications/useToast'
 import { useThumbnail } from '../preview/useThumbnail'
 import { CameraEntry } from './CameraEntry'
 import './CameraSidebar.css'
@@ -53,13 +54,20 @@ export function CameraSidebar() {
     })
   }, [cameras, refreshPreviews])
 
+  const addToast = useToastStore((s) => s.addToast)
+
   const handleToggleVcam = useCallback(
     (deviceId: string) => {
+      const isActive = activeDevices.has(deviceId)
+      const action = isActive ? 'stop' : 'start'
+      console.info(`[vcam] ${action} virtual camera for device '${deviceId}'`)
       toggleVcam(deviceId).catch((err: unknown) => {
-        console.error('Virtual camera toggle failed:', err)
+        const detail = err instanceof Error ? err.message : String(err)
+        console.error(`[vcam] Failed to ${action} virtual camera for device '${deviceId}':`, err)
+        addToast(`Failed to ${action} virtual camera: ${detail}`, 'error')
       })
     },
-    [toggleVcam],
+    [toggleVcam, activeDevices, addToast],
   )
 
   if (cameras.length === 0) {

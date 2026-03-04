@@ -7,8 +7,9 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "tauri dev --features canon",
+    "dev": "yarn build:vcam && tauri dev --features canon",
     "dev:vite": "vite",
+    "build:vcam": "cd src-tauri && cargo build -p vcam-source",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

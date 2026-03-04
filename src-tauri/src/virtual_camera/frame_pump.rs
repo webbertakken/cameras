@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::{debug, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::preview::encode_worker::JpegFrameBuffer;
 use crate::virtual_camera::nv12;
@@ -22,9 +22,10 @@ pub fn run_frame_pump(
     shm_writer: vcam_shared::SharedMemoryWriter,
     running: Arc<AtomicBool>,
 ) {
-    debug!("frame pump started");
+    info!("Frame pump started — waiting for JPEG frames...");
 
     let mut last_seq = 0u64;
+    let mut frames_delivered = 0u64;
 
     while running.load(Ordering::Relaxed) {
         let seq = jpeg_buffer.sequence();
@@ -46,7 +47,7 @@ pub fn run_frame_pump(
         let image = match turbojpeg::decompress(&frame.jpeg_bytes, turbojpeg::PixelFormat::RGB) {
             Ok(img) => img,
             Err(e) => {
-                warn!("frame pump: JPEG decode failed: {e}");
+                error!("Frame pump: JPEG decode failed: {e}");
                 continue;
             }
         };
@@ -56,17 +57,23 @@ pub fn run_frame_pump(
 
         // NV12 requires even dimensions
         if width % 2 != 0 || height % 2 != 0 {
-            warn!("frame pump: skipping frame with odd dimensions {width}x{height}");
+            warn!("Frame pump: skipping frame with odd dimensions {width}x{height}");
             continue;
         }
 
         let nv12_data = nv12::rgb_to_nv12(&image.pixels, width, height);
         shm_writer.write_frame(&nv12_data);
 
-        trace!("frame pump: wrote NV12 frame seq={seq} {width}x{height}");
+        frames_delivered += 1;
+        if frames_delivered == 1 {
+            info!("Frame pump: first NV12 frame delivered ({width}x{height}, seq={seq})");
+        }
+        trace!(
+            "Frame pump: wrote NV12 frame seq={seq} {width}x{height} (total={frames_delivered})"
+        );
     }
 
-    debug!("frame pump stopped");
+    info!("Frame pump stopped after {frames_delivered} frames delivered");
 }
 
 #[cfg(test)]

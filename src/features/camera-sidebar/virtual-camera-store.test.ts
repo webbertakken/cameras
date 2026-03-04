@@ -53,7 +53,7 @@ describe('useVirtualCameraStore', () => {
 
     expect(useVirtualCameraStore.getState().isActive('cam-1')).toBe(false)
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Virtual camera toggle failed'),
+      expect.stringContaining("[vcam-store] IPC 'start_virtual_camera' failed"),
       expect.any(Error),
     )
     consoleSpy.mockRestore()
@@ -69,7 +69,7 @@ describe('useVirtualCameraStore', () => {
     // Device should still be marked active since stop failed
     expect(useVirtualCameraStore.getState().isActive('cam-1')).toBe(true)
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Virtual camera toggle failed'),
+      expect.stringContaining("[vcam-store] IPC 'stop_virtual_camera' failed"),
       expect.any(Error),
     )
     consoleSpy.mockRestore()

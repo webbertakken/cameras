@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tauri::State;
+use tracing::{error, info};
 
 use super::VirtualCameraState;
 use crate::preview::commands::PreviewState;
@@ -16,22 +17,38 @@ pub async fn start_virtual_camera(
     preview_state: State<'_, PreviewState>,
     vcam_state: State<'_, VirtualCameraState>,
 ) -> Result<(), String> {
+    info!("start_virtual_camera called for device '{device_id}'");
+
     // Extract the JPEG buffer and device name from the active preview session
     let (jpeg_buffer, device_name) = {
         let sessions = preview_state.sessions.lock();
-        let session = sessions
-            .get(&device_id)
-            .ok_or_else(|| format!("no active preview for device: {device_id}"))?;
+        let session = sessions.get(&device_id).ok_or_else(|| {
+            let msg = format!("no active preview for device: {device_id}");
+            error!("{msg}");
+            msg
+        })?;
 
-        let buffer = session
-            .jpeg_buffer()
-            .ok_or_else(|| "preview session has no JPEG buffer".to_string())?;
+        let buffer = session.jpeg_buffer().ok_or_else(|| {
+            let msg = format!("preview session for '{device_id}' has no JPEG buffer");
+            error!("{msg}");
+            msg
+        })?;
 
+        info!("Found JPEG buffer for device '{device_id}'");
         (Arc::clone(buffer), device_id.clone())
     };
 
     let sink = super::create_sink(device_name, jpeg_buffer);
-    vcam_state.start(device_id, sink)
+    match vcam_state.start(device_id.clone(), sink) {
+        Ok(()) => {
+            info!("Virtual camera started successfully for device '{device_id}'");
+            Ok(())
+        }
+        Err(e) => {
+            error!("Virtual camera start failed for device '{device_id}': {e}");
+            Err(e)
+        }
+    }
 }
 
 /// Stop the virtual camera output for the given device. Idempotent.
@@ -40,7 +57,17 @@ pub async fn stop_virtual_camera(
     device_id: String,
     vcam_state: State<'_, VirtualCameraState>,
 ) -> Result<(), String> {
-    vcam_state.stop(&device_id)
+    info!("stop_virtual_camera called for device '{device_id}'");
+    match vcam_state.stop(&device_id) {
+        Ok(()) => {
+            info!("Virtual camera stopped for device '{device_id}'");
+            Ok(())
+        }
+        Err(e) => {
+            error!("Virtual camera stop failed for device '{device_id}': {e}");
+            Err(e)
+        }
+    }
 }
 
 /// Check whether a virtual camera is active for the given device.
