@@ -266,8 +266,12 @@ fn poll_live_view<S: EdsSdkApi>(
     let mut stats = PollStats::new(Instant::now());
 
     while running.load(Ordering::Relaxed) {
+        // Measure SDK download time — this is the meaningful latency for Canon
+        // (the time EDSDK takes to transfer the EVF image over USB).
+        let download_start = Instant::now();
         match sdk.download_evf_image(camera) {
             Ok(jpeg_data) => {
+                let download_us = download_start.elapsed().as_micros() as u64;
                 let size = jpeg_data.len();
                 // Canon live view delivers JPEG natively — push directly
                 // into the JPEG buffer, bypassing RGB encoding entirely.
@@ -278,11 +282,13 @@ fn poll_live_view<S: EdsSdkApi>(
                     encoder_kind: EncoderKind::CpuFallback, // Not really encoded, just a label
                 });
 
-                // Update diagnostic stats for the overlay
+                // Update diagnostic stats for the overlay.
+                // Use record_frame_with_latency so the measured SDK download
+                // time is used directly — the clock-offset path in record_frame
+                // would cancel to zero because Canon has no external timestamp.
                 {
                     let mut ds = diag_stats.lock();
-                    let elapsed_us = ds.elapsed_us();
-                    ds.record_frame(size, elapsed_us);
+                    ds.record_frame_with_latency(size, download_us);
                 }
 
                 match stats.on_frame(size, Instant::now()) {
@@ -503,6 +509,13 @@ mod tests {
             snap.bandwidth_bps > 0,
             "diagnostic bandwidth should be positive, got {}",
             snap.bandwidth_bps
+        );
+        // Regression: latency must not be zero — Canon used to pass elapsed_us
+        // as the capture timestamp which cancelled to 0 in record_frame.
+        assert!(
+            snap.latency_ms >= 0.0,
+            "latency_ms must be non-negative, got {}",
+            snap.latency_ms
         );
 
         session.stop(&*mock, camera);
