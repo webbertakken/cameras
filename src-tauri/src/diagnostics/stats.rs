@@ -94,6 +94,14 @@ impl DiagnosticStats {
         (self.total_bytes as f64 / elapsed) as u64
     }
 
+    /// Elapsed microseconds since this stats instance was created.
+    ///
+    /// Useful for Canon live view where there is no external capture
+    /// timestamp — the polling thread uses this as the frame timestamp.
+    pub fn elapsed_us(&self) -> u64 {
+        self.start_time.elapsed().as_micros() as u64
+    }
+
     /// Reset all counters.
     pub fn reset(&mut self) {
         self.frame_count = 0;
@@ -245,5 +253,17 @@ mod tests {
         let snap = stats.snapshot();
         let json = serde_json::to_value(&snap).unwrap();
         assert_eq!(json["usbBusInfo"], "USB 2.0 Bus 1");
+    }
+
+    #[test]
+    fn elapsed_us_increases_over_time() {
+        let stats = DiagnosticStats::new();
+        let t0 = stats.elapsed_us();
+        thread::sleep(Duration::from_millis(10));
+        let t1 = stats.elapsed_us();
+        assert!(
+            t1 > t0,
+            "elapsed_us should increase over time: t0={t0}, t1={t1}"
+        );
     }
 }

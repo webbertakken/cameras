@@ -399,10 +399,14 @@ impl CaptureSession {
 /// Wraps a `LiveViewSession` that polls JPEG frames from the Canon SDK
 /// and pushes them directly into a `JpegFrameBuffer`. No encoding step
 /// is needed since Canon delivers JPEG natively.
+///
+/// Diagnostic stats (FPS, bandwidth, drops) are tracked by the polling
+/// thread and exposed via `diagnostics()` for the overlay.
 pub struct CanonCaptureSession {
     device_id: String,
     live_view: Option<LiveViewSession>,
     jpeg_buffer: Arc<JpegFrameBuffer>,
+    stats: Arc<Mutex<DiagnosticStats>>,
     /// Type-erased SDK reference for stopping the live view session.
     /// Stored as a closure that calls `stop()` with the correct types.
     stop_fn: Option<Box<dyn FnOnce(LiveViewSession) + Send>>,
@@ -420,9 +424,15 @@ impl CanonCaptureSession {
         camera: CameraHandle,
     ) -> Result<Self, String> {
         let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
+        let stats = Arc::new(Mutex::new(DiagnosticStats::new()));
 
-        let live_view = LiveViewSession::start(Arc::clone(&sdk), camera, Arc::clone(&jpeg_buffer))
-            .map_err(|e| format!("failed to start Canon live view: {e}"))?;
+        let live_view = LiveViewSession::start(
+            Arc::clone(&sdk),
+            camera,
+            Arc::clone(&jpeg_buffer),
+            Arc::clone(&stats),
+        )
+        .map_err(|e| format!("failed to start Canon live view: {e}"))?;
 
         tracing::info!("Started Canon live view for {device_id}");
 
@@ -436,6 +446,7 @@ impl CanonCaptureSession {
             device_id,
             live_view: Some(live_view),
             jpeg_buffer,
+            stats,
             stop_fn: Some(stop_fn),
         })
     }
@@ -456,6 +467,11 @@ impl CanonCaptureSession {
     /// Return the device ID for this session.
     pub fn device_id(&self) -> &str {
         &self.device_id
+    }
+
+    /// Take a snapshot of diagnostic stats for this session.
+    pub fn diagnostics(&self) -> DiagnosticSnapshot {
+        self.stats.lock().snapshot()
     }
 
     /// Stop the Canon capture session. Idempotent.
@@ -511,11 +527,11 @@ impl PreviewSession {
         }
     }
 
-    /// Take a snapshot of diagnostic stats (DirectShow only).
+    /// Take a snapshot of diagnostic stats.
     pub fn diagnostics(&self) -> DiagnosticSnapshot {
         match self {
             Self::DirectShow(session) => session.diagnostics(),
-            Self::Canon(_) => DiagnosticSnapshot::default(),
+            Self::Canon(session) => session.diagnostics(),
         }
     }
 
@@ -776,5 +792,49 @@ mod tests {
 
         // Graph never ran — watchdog exits via startup timeout, not via error
         assert!(!called.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn canon_session_exposes_diagnostics() {
+        use crate::camera::canon::api::CameraHandle;
+        use crate::camera::canon::mock::MockEdsSdk;
+
+        let mock = Arc::new(
+            MockEdsSdk::new()
+                .with_cameras(1)
+                .with_live_view_frame(vec![0xFF, 0xD8, 0xFF, 0xD9]),
+        );
+        let camera = CameraHandle(0);
+
+        let session =
+            CanonCaptureSession::new("canon:MOCK0001".to_string(), mock.clone(), camera).unwrap();
+
+        // Wait for a few frames to arrive
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let snap = session.diagnostics();
+        assert!(
+            snap.frame_count > 0,
+            "Canon diagnostics should track frames, got {}",
+            snap.frame_count
+        );
+        assert!(
+            snap.fps > 0.0,
+            "Canon diagnostics should report FPS, got {}",
+            snap.fps
+        );
+        assert!(
+            snap.bandwidth_bps > 0,
+            "Canon diagnostics should report bandwidth, got {}",
+            snap.bandwidth_bps
+        );
+
+        // Via PreviewSession enum
+        let preview = PreviewSession::Canon(session);
+        let snap2 = preview.diagnostics();
+        assert!(
+            snap2.frame_count > 0,
+            "PreviewSession::Canon should delegate diagnostics"
+        );
     }
 }
