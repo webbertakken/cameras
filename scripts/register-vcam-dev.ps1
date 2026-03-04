@@ -29,6 +29,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# HKLM writes require elevation
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+if (-not $isAdmin) {
+    Write-Host 'Elevating to admin (HKLM registry writes require it)...'
+    $argList = @('-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+    if ($Unregister) { $argList += '-Unregister' }
+    if ($Release) { $argList += '-Release' }
+    Start-Process pwsh -ArgumentList $argList -Verb RunAs -Wait
+    exit $LASTEXITCODE
+}
+
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $TauriDir = Join-Path $ProjectRoot 'src-tauri'
 $Profile = if ($Release) { 'release' } else { 'debug' }
@@ -37,8 +50,14 @@ $MsixDir = Join-Path $TauriDir 'msix'
 $ManifestSource = Join-Path $MsixDir 'AppxManifest.xml'
 $IconSource = Join-Path $TauriDir 'icons' 'icon.png'
 $PackageName = 'io.takken.cameras'
+$Clsid = '{7B2E3A1F-4D5C-4E8B-9A6F-1C2D3E4F5A6B}'
+$ClsidRegPath = "HKLM:\Software\Classes\CLSID\$Clsid"
 
 if ($Unregister) {
+    Write-Host 'Removing HKLM COM registration...'
+    Remove-Item -Path $ClsidRegPath -Recurse -ErrorAction SilentlyContinue
+    Write-Host "Removed: $ClsidRegPath"
+
     Write-Host 'Removing registered sparse package...'
     $pkg = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
     if ($pkg) {
@@ -98,13 +117,22 @@ Write-Host "  ExternalLocation: $TargetDir"
 
 Add-AppxPackage -Register $ManifestPath -ExternalLocation $TargetDir
 
-# Step 5: Verify
+# Step 5: Register COM in HKLM so FrameServer (LOCAL SERVICE) can resolve the CLSID
+Write-Host 'Registering COM in HKLM for FrameServer...'
+$InProcPath = "$ClsidRegPath\InProcServer32"
+New-Item -Path $InProcPath -Force | Out-Null
+Set-ItemProperty -Path $InProcPath -Name '(Default)' -Value (Join-Path $TargetDir 'vcam_source.dll')
+Set-ItemProperty -Path $InProcPath -Name 'ThreadingModel' -Value 'Both'
+Write-Host "  $InProcPath -> $(Join-Path $TargetDir 'vcam_source.dll')"
+
+# Step 6: Verify
 $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
 if ($registered) {
     Write-Host "`nRegistered successfully:"
     Write-Host "  Name: $($registered.Name)"
     Write-Host "  Version: $($registered.Version)"
     Write-Host "  InstallLocation: $($registered.InstallLocation)"
+    Write-Host "  HKLM COM: $InProcPath"
     Write-Host "`nVirtual camera is ready for dev testing."
 } else {
     Write-Error 'Registration failed — package not found after Add-AppxPackage.'
