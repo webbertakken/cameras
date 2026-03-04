@@ -40,17 +40,11 @@ pub unsafe extern "system" fn DllGetClassObject(
         return CLASS_E_CLASSNOTAVAILABLE;
     }
 
-    if *riid != IClassFactory::IID {
-        return CLASS_E_CLASSNOTAVAILABLE;
-    }
-
+    // Create the factory and use proper QueryInterface to handle IUnknown and
+    // any other valid riid, rather than hard-rejecting non-IClassFactory riids.
     let factory: IClassFactory = VCamClassFactory.into();
-    // SAFETY: ppv is valid and we transfer ownership via transmute.
-    unsafe {
-        *ppv = std::mem::transmute::<IClassFactory, *mut core::ffi::c_void>(factory);
-    };
-
-    S_OK
+    // SAFETY: ppv is valid; query() writes the correctly ref-counted pointer.
+    unsafe { factory.query(riid, ppv) }
 }
 
 /// COM entry point: returns `S_OK` if the DLL can be unloaded (no live objects).

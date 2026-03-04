@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use windows::Win32::Foundation::{E_UNEXPECTED, S_OK};
+use windows::Win32::Media::KernelStreaming::{IKsControl, IKsControl_Impl, KSIDENTIFIER};
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFMediaEvent, IMFMediaEventGenerator,
     IMFMediaEventGenerator_Impl, IMFMediaEventQueue, IMFMediaSource, IMFMediaSource_Impl,
@@ -63,9 +64,10 @@ enum SourceState {
 
 /// Custom media source for the virtual camera.
 ///
-/// Implements IMFMediaSource + IMFMediaEventGenerator. IKsControl is omitted
-/// for now — FrameServer can still use the source without property negotiation.
-#[implement(IMFMediaSource, IMFMediaEventGenerator)]
+/// Implements IMFMediaSource + IMFMediaEventGenerator + IKsControl. FrameServer
+/// requires IKsControl on the media source; all property calls return
+/// ERROR_SET_NOT_FOUND (0x80070490) to signal no properties are supported.
+#[implement(IMFMediaSource, IMFMediaEventGenerator, IKsControl)]
 pub(crate) struct VCamMediaSource {
     event_queue: IMFMediaEventQueue,
     state: Mutex<SourceState>,
@@ -284,6 +286,47 @@ impl IMFMediaEventGenerator_Impl for VCamMediaSource_Impl {
             self.event_queue
                 .QueueEventParamVar(met, guidextendedtype, hrstatus, pvvalue)
         }
+    }
+}
+
+/// Stub IKsControl implementation.
+///
+/// FrameServer queries IKsControl on the media source; we expose the interface
+/// but return ERROR_SET_NOT_FOUND for every call to signal no properties are
+/// supported.
+impl IKsControl_Impl for VCamMediaSource_Impl {
+    fn KsProperty(
+        &self,
+        _property: *const KSIDENTIFIER,
+        _propertylength: u32,
+        _propertydata: *mut core::ffi::c_void,
+        _datalength: u32,
+        _bytesreturned: *mut u32,
+    ) -> windows_core::Result<()> {
+        // ERROR_SET_NOT_FOUND — no KS properties supported.
+        Err(windows_core::Error::from(HRESULT(0x80070490u32 as i32)))
+    }
+
+    fn KsMethod(
+        &self,
+        _method: *const KSIDENTIFIER,
+        _methodlength: u32,
+        _methoddata: *mut core::ffi::c_void,
+        _datalength: u32,
+        _bytesreturned: *mut u32,
+    ) -> windows_core::Result<()> {
+        Err(windows_core::Error::from(HRESULT(0x80070490u32 as i32)))
+    }
+
+    fn KsEvent(
+        &self,
+        _event: *const KSIDENTIFIER,
+        _eventlength: u32,
+        _eventdata: *mut core::ffi::c_void,
+        _datalength: u32,
+        _bytesreturned: *mut u32,
+    ) -> windows_core::Result<()> {
+        Err(windows_core::Error::from(HRESULT(0x80070490u32 as i32)))
     }
 }
 
