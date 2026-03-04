@@ -1,7 +1,11 @@
 fn main() {
     configure_edsdk();
     copy_vcam_source_dll();
-    tauri_build::build()
+
+    let windows =
+        tauri_build::WindowsAttributes::new().app_manifest(include_str!("cameras.exe.manifest"));
+    let attrs = tauri_build::Attributes::new().windows_attributes(windows);
+    tauri_build::try_build(attrs).expect("failed to run tauri build script");
 }
 
 /// Ensure `vcam_source.dll` is present in the target directory.
