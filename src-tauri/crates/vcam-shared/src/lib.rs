@@ -14,6 +14,26 @@ pub use reader::SharedMemoryReader;
 #[cfg(windows)]
 pub use writer::SharedMemoryWriter;
 
+/// CLSID for the Cameras App virtual camera media source.
+///
+/// {7B2E3A1F-4D5C-4E8B-9A6F-1C2D3E4F5A6B}
+///
+/// Shared between the main app (which passes it to `MFCreateVirtualCamera`)
+/// and the COM DLL (which uses it in `DllGetClassObject`).
+pub const VCAM_SOURCE_CLSID: u128 = 0x7B2E_3A1F_4D5C_4E8B_9A6F_1C2D_3E4F_5A6B;
+
+/// Well-known shared memory name used by both the main app and the COM DLL.
+pub const SHARED_MEMORY_NAME: &str = r"Local\CamerasApp_VCam_0";
+
+/// Default frame width when no shared memory is connected.
+pub const DEFAULT_WIDTH: u32 = 1920;
+
+/// Default frame height.
+pub const DEFAULT_HEIGHT: u32 = 1080;
+
+/// Target frame rate (frames per second).
+pub const TARGET_FPS: u32 = 30;
+
 #[cfg(all(test, windows))]
 mod tests {
     use std::sync::atomic::Ordering;

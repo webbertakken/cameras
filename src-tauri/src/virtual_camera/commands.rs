@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use super::VirtualCameraState;
@@ -14,15 +16,21 @@ pub async fn start_virtual_camera(
     preview_state: State<'_, PreviewState>,
     vcam_state: State<'_, VirtualCameraState>,
 ) -> Result<(), String> {
-    // Verify an active preview session exists for this device
-    {
+    // Extract the JPEG buffer and device name from the active preview session
+    let (jpeg_buffer, device_name) = {
         let sessions = preview_state.sessions.lock();
-        if !sessions.contains_key(&device_id) {
-            return Err(format!("no active preview for device: {device_id}"));
-        }
-    }
+        let session = sessions
+            .get(&device_id)
+            .ok_or_else(|| format!("no active preview for device: {device_id}"))?;
 
-    let sink = super::create_sink();
+        let buffer = session
+            .jpeg_buffer()
+            .ok_or_else(|| "preview session has no JPEG buffer".to_string())?;
+
+        (Arc::clone(buffer), device_id.clone())
+    };
+
+    let sink = super::create_sink(device_name, jpeg_buffer);
     vcam_state.start(device_id, sink)
 }
 
@@ -99,11 +107,22 @@ mod tests {
         // Simulate command logic: check session, then try start
         let result = {
             let sessions = preview_state.sessions.lock();
-            if !sessions.contains_key("nonexistent") {
+            let session = sessions.get("nonexistent");
+            if session.is_none() {
                 Err(format!("no active preview for device: nonexistent"))
             } else {
-                let sink = super::super::create_sink();
-                vcam_state.start("nonexistent".to_string(), sink)
+                let session = session.unwrap();
+                let buffer = session
+                    .jpeg_buffer()
+                    .ok_or_else(|| "no JPEG buffer".to_string());
+                match buffer {
+                    Ok(buf) => {
+                        let sink =
+                            super::super::create_sink("nonexistent".to_string(), Arc::clone(buf));
+                        vcam_state.start("nonexistent".to_string(), sink)
+                    }
+                    Err(e) => Err(e),
+                }
             }
         };
 

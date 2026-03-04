@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod frame_pump;
 pub mod nv12;
 pub mod stub;
 
@@ -8,8 +9,11 @@ pub mod linux;
 pub mod windows;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use parking_lot::Mutex;
+
+use crate::preview::encode_worker::JpegFrameBuffer;
 
 /// Trait for virtual camera output sinks.
 ///
@@ -81,17 +85,28 @@ impl Default for VirtualCameraState {
 }
 
 /// Create a platform-appropriate virtual camera sink.
-pub fn create_sink() -> Box<dyn VirtualCameraSink> {
+///
+/// On Windows, creates an `MfVirtualCamera` that reads JPEG frames from the
+/// buffer, converts to NV12, and feeds them to a Media Foundation virtual
+/// camera via shared memory.
+///
+/// On other platforms, returns a stub or platform-specific implementation.
+pub fn create_sink(
+    device_name: String,
+    jpeg_buffer: Arc<JpegFrameBuffer>,
+) -> Box<dyn VirtualCameraSink> {
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows::DirectShowVirtualCamera)
+        Box::new(windows::MfVirtualCamera::new(device_name, jpeg_buffer))
     }
     #[cfg(target_os = "linux")]
     {
+        let _ = (device_name, jpeg_buffer);
         Box::new(linux::V4l2LoopbackSink)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
+        let _ = (device_name, jpeg_buffer);
         Box::new(stub::StubSink)
     }
 }
@@ -165,23 +180,11 @@ mod tests {
 
     #[test]
     fn create_sink_returns_platform_appropriate() {
-        let mut sink = create_sink();
+        let buf = Arc::new(crate::preview::encode_worker::JpegFrameBuffer::new());
+        let sink = create_sink("Test Camera".to_string(), buf);
 
-        // All current platform sinks are stubs that return errors
-        let err = sink.start().unwrap_err();
-        assert!(
-            err.contains("not yet"),
-            "expected stub error message, got: {err}"
-        );
+        // On Windows the sink is an MfVirtualCamera (not running until start())
+        // On other platforms it's a stub
         assert!(!sink.is_running());
-
-        // On Windows specifically, verify it's the DirectShow variant
-        #[cfg(target_os = "windows")]
-        {
-            assert!(
-                err.contains("DirectShow"),
-                "expected DirectShow sink on Windows, got: {err}"
-            );
-        }
     }
 }
