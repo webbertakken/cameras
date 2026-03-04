@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap10">
+
+  <Identity
+    Name="io.takken.cameras"
+    Publisher="CN=Cameras App Dev"
+    Version="0.7.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Cameras Virtual Camera</DisplayName>
+    <PublisherDisplayName>Webber Takken</PublisherDisplayName>
+    <Logo>icons\icon.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.22000.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
+
+  <Applications>
+    <Application
+      Id="CamerasApp"
+      Executable="cameras.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App"
+      EntryPoint="windows.none">
+
+      <uap:VisualElements
+        DisplayName="Cameras Virtual Camera"
+        Square150x150Logo="icons\icon.png"
+        Square44x44Logo="icons\icon.png"
+        Description="Virtual camera COM extension"
+        AppListEntry="none"
+        BackgroundColor="#FFFFFF" />
+
+      <Extensions>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:InProcessServer Path="vcam_source.dll">
+              <com:Class
+                Id="7B2E3A1F-4D5C-4E8B-9A6F-1C2D3E4F5A6B"
+                DisplayName="Cameras App Virtual Camera Source"
+                ThreadingModel="Both" />
+            </com:InProcessServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+
+    </Application>
+  </Applications>
+</Package>

@@ -9,10 +9,11 @@ use std::sync::Mutex;
 
 use windows::Win32::Foundation::{E_NOTIMPL, S_OK};
 use windows::Win32::Media::MediaFoundation::{
-    IMFAsyncCallback, IMFAsyncResult, IMFMediaEvent, IMFMediaEventGenerator,
-    IMFMediaEventGenerator_Impl, IMFMediaEventQueue, IMFMediaSource, IMFMediaStream,
-    IMFMediaStream_Impl, IMFStreamDescriptor, MEMediaSample, MEStreamStarted, MFCreateEventQueue,
-    MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_E_SHUTDOWN,
+    IMFAsyncCallback, IMFAsyncResult, IMFMediaEvent, IMFMediaEventGenerator_Impl,
+    IMFMediaEventQueue, IMFMediaSource, IMFMediaStream2, IMFMediaStream2_Impl, IMFMediaStream_Impl,
+    IMFStreamDescriptor, MEMediaSample, MEStreamStarted, MFCreateEventQueue,
+    MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_E_SHUTDOWN, MF_STREAM_STATE, MF_STREAM_STATE_RUNNING,
+    MF_STREAM_STATE_STOPPED,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows_core::{implement, IUnknown, Interface, Ref, GUID, HRESULT};
@@ -21,11 +22,16 @@ use crate::sample_factory::create_nv12_sample;
 use crate::{decrement_object_count, increment_object_count, DEFAULT_HEIGHT, DEFAULT_WIDTH};
 
 /// Media stream that delivers NV12 samples from shared memory.
-#[implement(IMFMediaStream, IMFMediaEventGenerator)]
+///
+/// Implements `IMFMediaStream2` (and the inherited `IMFMediaStream` +
+/// `IMFMediaEventGenerator`) as required by the Windows FrameServer
+/// Custom Media Source specification.
+#[implement(IMFMediaStream2)]
 pub(crate) struct VCamMediaStream {
     event_queue: IMFMediaEventQueue,
     stream_descriptor: IMFStreamDescriptor,
     shutdown: AtomicBool,
+    stream_state: Mutex<MF_STREAM_STATE>,
     shared_mem_name: String,
     /// Last sequence number we delivered, to avoid re-delivering the same frame.
     last_sequence: Mutex<u64>,
@@ -56,6 +62,7 @@ impl VCamMediaStream {
             event_queue,
             stream_descriptor: stream_descriptor.clone(),
             shutdown: AtomicBool::new(false),
+            stream_state: Mutex::new(MF_STREAM_STATE_STOPPED),
             shared_mem_name: shared_mem_name.to_owned(),
             last_sequence: Mutex::new(0),
         })
@@ -125,17 +132,25 @@ impl Drop for VCamMediaStream {
 
 impl IMFMediaStream_Impl for VCamMediaStream_Impl {
     fn GetMediaSource(&self) -> windows_core::Result<IMFMediaSource> {
-        // FrameServer manages the source reference; we don't keep a back-pointer.
+        crate::trace::trace_method("IMFMediaStream::GetMediaSource");
         Err(windows_core::Error::from(E_NOTIMPL))
     }
 
     fn GetStreamDescriptor(&self) -> windows_core::Result<IMFStreamDescriptor> {
+        crate::trace::trace_method("IMFMediaStream::GetStreamDescriptor");
         self.check_shutdown()?;
         Ok(self.stream_descriptor.clone())
     }
 
     fn RequestSample(&self, _ptoken: Ref<IUnknown>) -> windows_core::Result<()> {
+        // Not tracing RequestSample — called per-frame, would flood the log.
         self.check_shutdown()?;
+
+        // Only deliver frames when the stream is running.
+        if *self.stream_state.lock().unwrap() != MF_STREAM_STATE_RUNNING {
+            return Ok(());
+        }
+
         self.deliver_sample()
     }
 }
@@ -178,6 +193,26 @@ impl IMFMediaEventGenerator_Impl for VCamMediaStream_Impl {
             self.event_queue
                 .QueueEventParamVar(met, guidextendedtype, hrstatus, pvvalue)
         }
+    }
+}
+
+/// `IMFMediaStream2` extension — stream state management.
+///
+/// FrameServer calls `SetStreamState(MF_STREAM_STATE_RUNNING)` to start
+/// frame delivery and `SetStreamState(MF_STREAM_STATE_STOPPED)` to pause.
+/// `RequestSample` only delivers frames when the state is running.
+impl IMFMediaStream2_Impl for VCamMediaStream_Impl {
+    fn SetStreamState(&self, value: MF_STREAM_STATE) -> windows_core::Result<()> {
+        crate::trace::trace_method(&format!("IMFMediaStream2::SetStreamState({})", value.0));
+        self.check_shutdown()?;
+        *self.stream_state.lock().unwrap() = value;
+        Ok(())
+    }
+
+    fn GetStreamState(&self) -> windows_core::Result<MF_STREAM_STATE> {
+        crate::trace::trace_method("IMFMediaStream2::GetStreamState");
+        self.check_shutdown()?;
+        Ok(*self.stream_state.lock().unwrap())
     }
 }
 

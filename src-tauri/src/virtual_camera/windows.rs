@@ -10,17 +10,11 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use tracing::{debug, error, info, warn};
-use windows::core::PCWSTR;
 use windows::core::{GUID, HSTRING};
-use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::Media::KernelStreaming::KSCATEGORY_VIDEO_CAMERA;
 use windows::Win32::Media::MediaFoundation::{
     IMFVirtualCamera, MFCreateVirtualCamera, MFVirtualCameraAccess_CurrentUser,
     MFVirtualCameraLifetime_Session, MFVirtualCameraType_SoftwareCameraSource,
-};
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
-    REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 
 use super::VirtualCameraSink;
@@ -54,45 +48,13 @@ impl MfVirtualCamera {
         }
     }
 
-    /// Locate the vcam-source COM DLL relative to the current executable.
-    fn find_com_dll() -> Result<String, String> {
-        let exe = std::env::current_exe().map_err(|e| {
-            error!("Failed to get current exe path: {e}");
-            format!("failed to get exe path: {e}")
-        })?;
-        let exe_dir = exe
-            .parent()
-            .ok_or_else(|| "exe has no parent directory".to_string())?;
-        let dll_path = exe_dir.join("vcam_source.dll");
-
-        debug!("Looking for vcam_source.dll at: {}", dll_path.display());
-
-        if dll_path.exists() {
-            info!("Found vcam_source.dll at: {}", dll_path.display());
-            Ok(dll_path.to_string_lossy().to_string())
-        } else {
-            let msg = format!(
-                "vcam_source.dll not found at: {} — build vcam-source crate with \
-                 `cargo build -p vcam-source` and copy the DLL to the target directory",
-                dll_path.display()
-            );
-            error!("{msg}");
-            Err(msg)
-        }
-    }
-
-    /// Register the COM DLL and create the MF virtual camera.
+    /// Create the MF virtual camera backed by MSIX COM redirection.
+    ///
+    /// The MSIX sparse package must already be registered (done at install
+    /// time by the NSIS post-install hook). COM redirection lets FrameServer
+    /// resolve the vcam-source CLSID without any HKCU/HKLM registry entries.
     fn create_virtual_camera(&mut self) -> Result<(), String> {
         info!("Creating MF virtual camera for '{}'...", self.device_name);
-
-        // Locate and register the COM media source DLL
-        let dll_path = Self::find_com_dll()?;
-        info!("Registering COM server from {dll_path}...");
-        register_com_server(&dll_path).map_err(|e| {
-            error!("COM server registration failed: {e}");
-            e
-        })?;
-        info!("Registered vcam COM server at {dll_path}");
 
         // Build the CLSID string for our media source
         let clsid_str = clsid_string();
@@ -242,11 +204,7 @@ impl Drop for MfVirtualCamera {
 }
 
 // ---------------------------------------------------------------------------
-// COM registration helpers (mirrors vcam-source/src/registry.rs)
-//
-// We duplicate these here because vcam-source is a cdylib and cannot be
-// linked as a regular Rust dependency. The source of truth for the CLSID
-// is vcam-shared::VCAM_SOURCE_CLSID.
+// CLSID helpers
 // ---------------------------------------------------------------------------
 
 /// Format the CLSID as a registry-style GUID string: `{XXXXXXXX-XXXX-...}`.
@@ -266,92 +224,6 @@ fn clsid_string() -> String {
         guid.data4[6],
         guid.data4[7],
     )
-}
-
-/// Register the COM media source DLL under HKCU so FrameServer can find it.
-fn register_com_server(dll_path: &str) -> Result<(), String> {
-    let key_path = format!(r"Software\Classes\CLSID\{}\InProcServer32", clsid_string());
-    debug!("Registering COM server: key={key_path}, dll={dll_path}");
-    let wide_key = to_wide(&key_path);
-
-    let mut hkey = HKEY::default();
-    let result = unsafe {
-        RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(wide_key.as_ptr()),
-            Some(0),
-            None,
-            REG_OPTION_NON_VOLATILE,
-            KEY_WRITE,
-            None,
-            &mut hkey,
-            None,
-        )
-    };
-
-    if result != ERROR_SUCCESS {
-        let msg = format!(
-            "Failed to create registry key '{key_path}': error code {}",
-            result.0
-        );
-        error!("{msg}");
-        return Err(msg);
-    }
-
-    // Set default value to the DLL path.
-    let wide_path = to_wide(dll_path);
-    let path_bytes = wide_to_bytes(&wide_path);
-
-    let result = unsafe { RegSetValueExW(hkey, None, Some(0), REG_SZ, Some(&path_bytes)) };
-
-    if result != ERROR_SUCCESS {
-        let _ = unsafe { RegCloseKey(hkey) };
-        let msg = format!(
-            "Failed to set DLL path in registry: error code {}",
-            result.0
-        );
-        error!("{msg}");
-        return Err(msg);
-    }
-
-    // Set ThreadingModel = "Both".
-    let threading_model = to_wide("Both");
-    let tm_bytes = wide_to_bytes(&threading_model);
-    let wide_name = to_wide("ThreadingModel");
-
-    let result = unsafe {
-        RegSetValueExW(
-            hkey,
-            PCWSTR(wide_name.as_ptr()),
-            Some(0),
-            REG_SZ,
-            Some(&tm_bytes),
-        )
-    };
-
-    let _ = unsafe { RegCloseKey(hkey) };
-
-    if result != ERROR_SUCCESS {
-        let msg = format!(
-            "Failed to set ThreadingModel in registry: error code {}",
-            result.0
-        );
-        error!("{msg}");
-        return Err(msg);
-    }
-
-    debug!("COM server registered successfully under HKCU");
-    Ok(())
-}
-
-/// Encode a Rust `&str` as a null-terminated UTF-16 wide string.
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-/// Convert a null-terminated UTF-16 slice to a byte slice for registry APIs.
-fn wide_to_bytes(wide: &[u16]) -> Vec<u8> {
-    wide.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
 #[cfg(test)]
@@ -393,20 +265,6 @@ mod tests {
 
         // Clean up
         vcam.pump_running.store(false, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn find_com_dll_returns_error_when_missing() {
-        // The DLL won't exist in the test runner's directory
-        // This verifies the function handles missing DLLs gracefully
-        let result = MfVirtualCamera::find_com_dll();
-        // May succeed or fail depending on build output location
-        if let Err(e) = &result {
-            assert!(
-                e.contains("not found"),
-                "expected 'not found' error, got: {e}"
-            );
-        }
     }
 
     #[test]

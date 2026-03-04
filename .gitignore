@@ -53,3 +53,8 @@ tmp/
 
 # SDKs
 .proprietary
+
+# MSIX build artefacts
+src-tauri/msix/dev-cert.pfx
+src-tauri/msix/*.msix
+src-tauri/msix/staging/

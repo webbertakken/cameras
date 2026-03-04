@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vcam-shared", "crates/vcam-source"]
+members = [".", "crates/vcam-shared", "crates/vcam-source", "crates/vcam-test"]
 
 [package]
 name = "cameras"
@@ -55,7 +55,6 @@ features = [
     "Win32_Media_KernelStreaming",
     "Win32_Media_MediaFoundation",
     "Win32_Devices_Properties",
-    "Win32_System_Registry",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Graphics_Gdi",

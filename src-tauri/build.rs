@@ -1,6 +1,35 @@
 fn main() {
     configure_edsdk();
+    copy_vcam_source_dll();
     tauri_build::build()
+}
+
+/// Ensure `vcam_source.dll` is present in the target directory.
+///
+/// Since `vcam-source` is a workspace member, its DLL lands in the shared
+/// `target/{profile}/` directory alongside `cameras.exe`. This function
+/// verifies the DLL exists and emits a `rerun-if-changed` directive so
+/// Cargo rebuilds when the DLL is updated.
+///
+/// Build `vcam-source` first: `cargo build -p vcam-source`
+fn copy_vcam_source_dll() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "windows" {
+        return;
+    }
+
+    let target_dir = resolve_target_dir();
+    let dll_path = target_dir.join("vcam_source.dll");
+
+    if !dll_path.exists() {
+        println!(
+            "cargo:warning=vcam_source.dll not found at {}. \
+             Build it with `cargo build -p vcam-source`.",
+            dll_path.display()
+        );
+    }
+
+    println!("cargo:rerun-if-changed={}", dll_path.display());
 }
 
 /// Configure EDSDK linking when the `canon` feature is enabled.

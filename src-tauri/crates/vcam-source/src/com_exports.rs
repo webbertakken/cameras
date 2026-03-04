@@ -36,7 +36,10 @@ pub unsafe extern "system" fn DllGetClassObject(
     let rclsid = unsafe { &*rclsid };
     let riid = unsafe { &*riid };
 
+    crate::trace::trace_dll_get_class_object(rclsid, riid);
+
     if *rclsid != vcam_clsid() {
+        crate::trace::trace("DllGetClassObject -> CLASS_E_CLASSNOTAVAILABLE");
         return CLASS_E_CLASSNOTAVAILABLE;
     }
 
@@ -44,7 +47,9 @@ pub unsafe extern "system" fn DllGetClassObject(
     // any other valid riid, rather than hard-rejecting non-IClassFactory riids.
     let factory: IClassFactory = VCamClassFactory.into();
     // SAFETY: ppv is valid; query() writes the correctly ref-counted pointer.
-    unsafe { factory.query(riid, ppv) }
+    let hr = unsafe { factory.query(riid, ppv) };
+    crate::trace::trace_method_result("DllGetClassObject", hr.0);
+    hr
 }
 
 /// COM entry point: returns `S_OK` if the DLL can be unloaded (no live objects).

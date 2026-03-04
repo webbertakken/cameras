@@ -5,6 +5,8 @@
 //! `IMFSample` objects to consumer applications (Zoom, Teams, etc.).
 
 #[cfg(windows)]
+mod activate;
+#[cfg(windows)]
 mod class_factory;
 #[cfg(windows)]
 mod media_source;
@@ -17,6 +19,8 @@ mod sample_factory;
 
 #[cfg(windows)]
 mod com_exports;
+#[cfg(windows)]
+pub(crate) mod trace;
 
 #[cfg(windows)]
 pub use com_exports::{DllCanUnloadNow, DllGetClassObject};

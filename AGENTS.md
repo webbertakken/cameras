@@ -112,6 +112,23 @@ cat tmp/dev-server.log
 - **Expected success messages for ALL cameras** — not just one.
 - The dev server MUST run with ZERO errors related to the change.
 
+### Step 5: E2E verification via Tauri
+
+Use Tauri's WebDriver or manual UI interaction to verify that user-facing features
+work end-to-end in the running dev app. Quality checks and log review are not
+sufficient — the actual UI buttons and flows must be exercised.
+
+- Confirm the feature's primary action completes without error toasts or console errors
+- Check that the UI state updates correctly (e.g., toggles, status indicators)
+- Verify no regressions in adjacent features visible in the same view
+
+If the button or feature produces an error: diagnose, fix, restart from step 1.
+
+**Important**: Agents MUST interact with the running app themselves (click buttons,
+trigger IPC commands, grab errors) rather than asking the user to test. If a UI
+action produces an error toast, capture it from the logs — never rely on the user
+to report it.
+
 ### Failure protocol
 
 - If any step fails: diagnose, fix, restart from step 1
