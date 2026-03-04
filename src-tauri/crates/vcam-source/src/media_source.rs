@@ -6,7 +6,9 @@
 //! Start → (frame delivery) → Stop → Shutdown.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use vcam_shared::SharedMemoryOwner;
 
 use windows::Win32::Foundation::{E_UNEXPECTED, S_OK};
 use windows::Win32::Media::KernelStreaming::{
@@ -113,6 +115,10 @@ pub(crate) struct VCamMediaSource {
     stream: Mutex<Option<IMFMediaStream2>>,
     shutdown: AtomicBool,
     shared_mem_name: Mutex<String>,
+    /// Owns the `Global\` shared memory mapping. Created during `Start()`,
+    /// dropped during `Stop()`/`Shutdown()`. The COM DLL (FrameServer) creates
+    /// this mapping; the app opens it via `SharedMemoryProducer`.
+    shm_owner: Mutex<Option<Arc<SharedMemoryOwner>>>,
 }
 
 impl VCamMediaSource {
@@ -143,6 +149,7 @@ impl VCamMediaSource {
             stream: Mutex::new(None),
             shutdown: AtomicBool::new(false),
             shared_mem_name: Mutex::new(SHARED_MEMORY_NAME.to_owned()),
+            shm_owner: Mutex::new(None),
         })
     }
 
@@ -167,6 +174,9 @@ impl VCamMediaSource {
         if let Some(stream) = self.stream.lock().unwrap().take() {
             drop(stream);
         }
+
+        // Drop the shared memory owner.
+        self.shm_owner.lock().unwrap().take();
 
         // Shut down the event queue.
         unsafe { self.event_queue.Shutdown()? };
@@ -266,8 +276,23 @@ impl IMFMediaSource_Impl for VCamMediaSource_Impl {
 
         let shared_mem_name = self.shared_mem_name.lock().unwrap().clone();
 
+        // Create the shared memory owner — this creates the Global\ mapping
+        // with a DACL granting interactive users write access.
+        let owner = SharedMemoryOwner::new(&shared_mem_name, DEFAULT_WIDTH, DEFAULT_HEIGHT, 3)
+            .map_err(|e| {
+                crate::trace::trace(&format!("Failed to create shared memory: {e}"));
+                windows_core::Error::from(E_UNEXPECTED)
+            })?;
+        let owner = Arc::new(owner);
+        *self.shm_owner.lock().unwrap() = Some(Arc::clone(&owner));
+
+        crate::trace::trace(&format!(
+            "Created shared memory '{}' ({}x{})",
+            shared_mem_name, DEFAULT_WIDTH, DEFAULT_HEIGHT
+        ));
+
         // Create and store the media stream. FrameServer requires IMFMediaStream2.
-        let stream = VCamMediaStream::new(&stream_desc, &shared_mem_name)?;
+        let stream = VCamMediaStream::new(&stream_desc, Some(owner))?;
         let stream_iface: IMFMediaStream2 = stream.into();
 
         // Transition to running state per MSDN FrameServer sample.
@@ -317,6 +342,9 @@ impl IMFMediaSource_Impl for VCamMediaSource_Impl {
         if let Some(stream) = self.stream.lock().unwrap().take() {
             drop(stream);
         }
+
+        // Drop the shared memory owner.
+        self.shm_owner.lock().unwrap().take();
 
         // Queue MESourceStopped.
         unsafe {

@@ -12,17 +12,39 @@ use crate::virtual_camera::nv12;
 
 /// Run the frame pump loop on the current thread.
 ///
-/// Polls `jpeg_buffer` for new JPEG frames, decodes them via turbojpeg,
-/// converts RGB to NV12, and writes into shared memory. Exits when
-/// `running` is set to `false`.
+/// Opens the shared memory mapping created by the COM DLL via
+/// `SharedMemoryProducer`, then polls `jpeg_buffer` for new JPEG frames,
+/// decodes them via turbojpeg, converts RGB to NV12, and writes into shared
+/// memory. Exits when `running` is set to `false`.
 ///
-/// The pump skips duplicate frames by tracking the sequence number.
+/// The pump retries opening the shared memory for up to 5 seconds (the COM
+/// DLL creates the mapping asynchronously when FrameServer loads it).
 pub fn run_frame_pump(
     jpeg_buffer: Arc<JpegFrameBuffer>,
-    shm_writer: vcam_shared::SharedMemoryWriter,
+    shm_name: String,
     running: Arc<AtomicBool>,
 ) {
-    info!("Frame pump started — waiting for JPEG frames...");
+    info!("Frame pump started — connecting to shared memory...");
+
+    // Retry opening the shared memory for up to 5 seconds.
+    let mut retries = 0u32;
+    let shm_producer = loop {
+        match vcam_shared::SharedMemoryProducer::open(&shm_name) {
+            Ok(p) => break p,
+            Err(e) => {
+                retries += 1;
+                if retries > 50 || !running.load(Ordering::Relaxed) {
+                    error!("Failed to connect to shared memory after {retries} retries: {e}");
+                    return;
+                }
+                if retries == 1 {
+                    info!("Waiting for shared memory '{shm_name}' (COM DLL must create it)...");
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    };
+    info!("Frame pump connected to shared memory '{shm_name}'");
 
     let mut last_seq = 0u64;
     let mut frames_delivered = 0u64;
@@ -75,7 +97,7 @@ pub fn run_frame_pump(
         };
 
         let nv12_data = nv12::bgr_to_nv12(&bgr_data, target_w, target_h);
-        shm_writer.write_frame(&nv12_data);
+        shm_producer.write_frame(&nv12_data);
 
         frames_delivered += 1;
         if frames_delivered == 1 {
@@ -192,16 +214,18 @@ mod tests {
                 .as_nanos()
         );
 
-        let shm_writer =
+        // SharedMemoryWriter creates the mapping (simulates what SharedMemoryOwner
+        // does in production). SharedMemoryProducer inside the pump opens it.
+        let _shm_writer =
             vcam_shared::SharedMemoryWriter::new(&shm_name, target_w, target_h, 3).unwrap();
         let shm_reader = vcam_shared::SharedMemoryReader::open(&shm_name).unwrap();
 
-        // Run one iteration of the pump, then signal stop
         let running_clone = Arc::clone(&running);
         let jpeg_buffer_clone = Arc::clone(&jpeg_buffer);
+        let shm_name_clone = shm_name.clone();
 
         let pump_thread = std::thread::spawn(move || {
-            run_frame_pump(jpeg_buffer_clone, shm_writer, running_clone);
+            run_frame_pump(jpeg_buffer_clone, shm_name_clone, running_clone);
         });
 
         // Wait for the pump to write a frame
@@ -227,8 +251,8 @@ mod tests {
         let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
         let running = Arc::new(AtomicBool::new(false));
 
-        // With running=false, the pump exits immediately
-        // This is a sanity check that the function doesn't panic
+        // With running=false, the pump exits immediately during the retry loop.
+        // This is a sanity check that the function doesn't panic.
         #[cfg(windows)]
         {
             let shm_name = format!(
@@ -238,8 +262,7 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             );
-            let shm_writer = vcam_shared::SharedMemoryWriter::new(&shm_name, 4, 4, 3).unwrap();
-            run_frame_pump(jpeg_buffer, shm_writer, running);
+            run_frame_pump(jpeg_buffer, shm_name, running);
         }
 
         #[cfg(not(windows))]

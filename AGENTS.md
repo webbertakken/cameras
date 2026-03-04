@@ -37,6 +37,15 @@
   ```
 - Hot reload only works for frontend (Vite). Rust changes require a full restart.
 
+## Lessons learned
+
+When you discover something that cost significant debugging time — platform quirks, API
+gotchas, non-obvious behaviour — record it. Keep entries concise (2-3 lines max). Only
+record things that were genuinely surprising or hard to figure out, not routine fixes.
+
+- **Project-specific**: add to `LESSONS_LEARNED.md` at the project root
+- **Cross-project**: add to `~/Repositories/software-factory/LESSONS_LEARNED.md`
+
 ## Self-testing protocol
 
 **MANDATORY** — agents MUST follow this protocol after ANY code change, before

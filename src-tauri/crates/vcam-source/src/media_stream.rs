@@ -5,7 +5,9 @@
 //! from the `SharedMemoryReader` and queue an `MEMediaSample` event.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use vcam_shared::SharedMemoryOwner;
 
 use windows::Win32::Foundation::{E_NOTIMPL, S_OK};
 use windows::Win32::Media::MediaFoundation::{
@@ -32,7 +34,9 @@ pub(crate) struct VCamMediaStream {
     stream_descriptor: IMFStreamDescriptor,
     shutdown: AtomicBool,
     stream_state: Mutex<MF_STREAM_STATE>,
-    shared_mem_name: String,
+    /// Shared memory owner created by VCamMediaSource. Read frames directly
+    /// from the owner's mapped region instead of opening SharedMemoryReader.
+    shm_owner: Option<Arc<SharedMemoryOwner>>,
     /// Last sequence number we delivered, to avoid re-delivering the same frame.
     last_sequence: Mutex<u64>,
 }
@@ -40,10 +44,11 @@ pub(crate) struct VCamMediaStream {
 impl VCamMediaStream {
     /// Create a new media stream.
     ///
-    /// `shared_mem_name` is the named shared memory region to read frames from.
+    /// `shm_owner` is the shared memory owner created by VCamMediaSource.
+    /// The stream reads frames directly from the owner's mapped region.
     pub(crate) fn new(
         stream_descriptor: &IMFStreamDescriptor,
-        shared_mem_name: &str,
+        shm_owner: Option<Arc<SharedMemoryOwner>>,
     ) -> windows_core::Result<Self> {
         let event_queue = unsafe { MFCreateEventQueue()? };
         increment_object_count();
@@ -63,7 +68,7 @@ impl VCamMediaStream {
             stream_descriptor: stream_descriptor.clone(),
             shutdown: AtomicBool::new(false),
             stream_state: Mutex::new(MF_STREAM_STATE_STOPPED),
-            shared_mem_name: shared_mem_name.to_owned(),
+            shm_owner,
             last_sequence: Mutex::new(0),
         })
     }
@@ -80,7 +85,10 @@ impl VCamMediaStream {
     fn deliver_sample(&self) -> windows_core::Result<()> {
         let (frame_data, width, height) = self.read_frame_or_black();
 
-        let sample = create_nv12_sample(&frame_data, width, height)?;
+        let sample = create_nv12_sample(&frame_data, width, height).map_err(|e| {
+            crate::trace::trace(&format!("ERROR: create_nv12_sample failed: {e}"));
+            e
+        })?;
 
         // Wrap the sample in a PROPVARIANT (VT_UNKNOWN).
         let unknown: IUnknown = sample.cast()?;
@@ -101,9 +109,8 @@ impl VCamMediaStream {
     /// Read a frame from shared memory, or generate a black NV12 frame if
     /// shared memory is not available.
     fn read_frame_or_black(&self) -> (Vec<u8>, u32, u32) {
-        #[cfg(windows)]
-        if let Ok(reader) = vcam_shared::SharedMemoryReader::open(&self.shared_mem_name) {
-            let header = reader.header();
+        if let Some(ref owner) = self.shm_owner {
+            let header = owner.header();
             let width = header.width;
             let height = header.height;
             let seq = header.sequence.load(Ordering::Acquire);
@@ -111,10 +118,12 @@ impl VCamMediaStream {
             let mut last_seq = self.last_sequence.lock().unwrap();
             if seq > *last_seq {
                 *last_seq = seq;
-                if let Some(data) = reader.read_frame() {
+                if let Some(data) = owner.read_frame() {
                     return (data.to_vec(), width, height);
                 }
             }
+        } else {
+            crate::trace::trace("WARN: read_frame_or_black called but no SharedMemoryOwner set");
         }
 
         // Fall back to a black NV12 frame.

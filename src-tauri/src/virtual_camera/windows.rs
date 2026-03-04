@@ -87,7 +87,12 @@ impl MfVirtualCamera {
         // Set the device class GUID to Camera so DirectShow-based apps (OBS)
         // can discover this device. Without this, MFCreateVirtualCamera
         // registers the device under SoftwareDevice which DirectShow ignores.
-        // Non-fatal: requires elevation, so we warn and continue without it.
+        //
+        // Non-fatal: requires elevation. Session-lifetime virtual cameras
+        // create a transient device node (no persistent devnode at install
+        // time), so this cannot be set via registry/NSIS. For non-admin users,
+        // OBS won't discover the device via DirectShow — this is a known
+        // limitation of session-lifetime virtual cameras.
         if let Err(e) = set_camera_class_guid(&vcam) {
             warn!("Could not set Camera class GUID (OBS may not see this device): {e}");
         }
@@ -104,25 +109,14 @@ impl MfVirtualCamera {
     }
 
     /// Spawn the background frame pump thread.
+    ///
+    /// The COM DLL (loaded by FrameServer) creates the `Global\` shared memory
+    /// mapping. The pump thread opens it via `SharedMemoryProducer` with a
+    /// retry loop.
     fn start_pump(&mut self) -> Result<(), String> {
-        let width = vcam_shared::DEFAULT_WIDTH;
-        let height = vcam_shared::DEFAULT_HEIGHT;
+        let shm_name = vcam_shared::SHARED_MEMORY_NAME.to_string();
 
-        info!(
-            "Creating shared memory '{}' ({width}x{height})...",
-            vcam_shared::SHARED_MEMORY_NAME
-        );
-        let shm_writer =
-            vcam_shared::SharedMemoryWriter::new(vcam_shared::SHARED_MEMORY_NAME, width, height, 3)
-                .map_err(|e| {
-                    error!("Failed to create shared memory: {e}");
-                    format!("failed to create shared memory: {e}")
-                })?;
-
-        info!(
-            "Created shared memory '{}' ({width}x{height})",
-            vcam_shared::SHARED_MEMORY_NAME
-        );
+        info!("Starting frame pump — shared memory will be opened by producer ('{shm_name}')...");
 
         self.pump_running.store(true, Ordering::Relaxed);
 
@@ -133,7 +127,7 @@ impl MfVirtualCamera {
         let handle = std::thread::Builder::new()
             .name("vcam-pump".to_string())
             .spawn(move || {
-                super::frame_pump::run_frame_pump(jpeg_buffer, shm_writer, running);
+                super::frame_pump::run_frame_pump(jpeg_buffer, shm_name, running);
             })
             .map_err(|e| {
                 error!("Failed to spawn frame pump thread: {e}");

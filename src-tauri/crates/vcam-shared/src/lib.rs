@@ -2,6 +2,10 @@ pub mod error;
 pub mod ring_buffer;
 
 #[cfg(windows)]
+pub mod owner;
+#[cfg(windows)]
+pub mod producer;
+#[cfg(windows)]
 pub mod reader;
 #[cfg(windows)]
 pub mod writer;
@@ -9,6 +13,10 @@ pub mod writer;
 pub use error::Error;
 pub use ring_buffer::{PixelFormat, SharedFrameHeader, HEADER_SIZE, MAGIC, VERSION};
 
+#[cfg(windows)]
+pub use owner::SharedMemoryOwner;
+#[cfg(windows)]
+pub use producer::SharedMemoryProducer;
 #[cfg(windows)]
 pub use reader::SharedMemoryReader;
 #[cfg(windows)]
@@ -23,7 +31,7 @@ pub use writer::SharedMemoryWriter;
 pub const VCAM_SOURCE_CLSID: u128 = 0x7B2E_3A1F_4D5C_4E8B_9A6F_1C2D_3E4F_5A6B;
 
 /// Well-known shared memory name used by both the main app and the COM DLL.
-pub const SHARED_MEMORY_NAME: &str = r"Local\CamerasApp_VCam_0";
+pub const SHARED_MEMORY_NAME: &str = r"Global\CamerasApp_VCam_0";
 
 /// Default frame width when no shared memory is connected.
 pub const DEFAULT_WIDTH: u32 = 1920;
@@ -152,6 +160,57 @@ mod tests {
         assert_eq!(writer.sequence(), 5);
 
         drop(writer);
+    }
+
+    #[test]
+    fn producer_writes_to_writer_created_mapping() {
+        let name = test_name("producer");
+        let width = 4;
+        let height = 2;
+        let frame_size = SharedFrameHeader::nv12_frame_size(width, height) as usize;
+
+        // SharedMemoryWriter acts as owner (creates the mapping).
+        let _owner = SharedMemoryWriter::new(&name, width, height, 3).unwrap();
+
+        // SharedMemoryProducer opens the existing mapping for writing.
+        let producer = SharedMemoryProducer::open(&name).unwrap();
+
+        let reader = SharedMemoryReader::open(&name).unwrap();
+
+        // Initially no frame.
+        assert!(reader.read_frame().is_none());
+
+        // Write via producer.
+        let frame: Vec<u8> = (0..frame_size).map(|i| (i % 256) as u8).collect();
+        producer.write_frame(&frame);
+
+        // Read back.
+        let read = reader.read_frame().expect("frame should be available");
+        assert_eq!(read, &frame[..]);
+    }
+
+    #[test]
+    fn owner_creates_and_reads_frames() {
+        let name = test_name("owner");
+        let width = 4;
+        let height = 2;
+        let frame_size = SharedFrameHeader::nv12_frame_size(width, height) as usize;
+
+        // SharedMemoryOwner creates the mapping with DACL.
+        let owner = SharedMemoryOwner::new(&name, width, height, 3).unwrap();
+
+        // Initially no frame.
+        assert!(owner.read_frame().is_none());
+
+        // Use a producer to write a frame.
+        let producer = SharedMemoryProducer::open(&name).unwrap();
+
+        let frame: Vec<u8> = (0..frame_size).map(|i| (i % 256) as u8).collect();
+        producer.write_frame(&frame);
+
+        // Owner can read it back.
+        let read = owner.read_frame().expect("frame should be available");
+        assert_eq!(read, &frame[..]);
     }
 
     #[test]
