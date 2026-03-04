@@ -234,6 +234,10 @@ pub mod directshow {
         gpu: Option<Arc<GpuContext>>,
         /// Optional sender for async JPEG encoding via the encode worker.
         frame_sender: Option<crate::preview::encode_worker::FrameSender>,
+        /// Frame counter for throttling raw buffer updates when encode worker is
+        /// active. Thumbnails only need ~6 fps, so we skip the expensive
+        /// `rgb.clone()` on most frames.
+        raw_buffer_counter: std::sync::atomic::AtomicU64,
     }
 
     static FRAME_CALLBACK_VTBL: ISampleGrabberCBVtbl = ISampleGrabberCBVtbl {
@@ -358,22 +362,41 @@ pub mod directshow {
 
         let frame_bytes = rgb.len();
 
-        // Send to the async JPEG encode worker (non-blocking)
+        // Send to the async JPEG encode worker (non-blocking).
+        // When the encode worker is active, `get_frame` reads from its JPEG
+        // buffer — the raw FrameBuffer is only needed for thumbnails (~6 fps).
+        // We throttle raw buffer updates to every 5th frame to avoid a ~6 MB
+        // clone on the hot path (1080p RGB24 = width * height * 3 bytes).
         if let Some(sender) = &data.frame_sender {
+            let counter = data
+                .raw_buffer_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Every 5th frame: clone for the raw buffer (thumbnails)
+            if counter % 5 == 0 {
+                data.buffer.push(Frame {
+                    data: rgb.clone(),
+                    width: data.width,
+                    height: data.height,
+                    timestamp_us,
+                });
+            }
+
             sender.send(Frame {
-                data: rgb.clone(),
+                data: rgb,
+                width: data.width,
+                height: data.height,
+                timestamp_us,
+            });
+        } else {
+            // No encode worker — push every frame to the raw buffer (legacy path)
+            data.buffer.push(Frame {
+                data: rgb,
                 width: data.width,
                 height: data.height,
                 timestamp_us,
             });
         }
-
-        data.buffer.push(Frame {
-            data: rgb,
-            width: data.width,
-            height: data.height,
-            timestamp_us,
-        });
         data.stats.lock().record_frame(frame_bytes, timestamp_us);
 
         // Log early frames at debug level to confirm delivery
@@ -413,6 +436,7 @@ pub mod directshow {
             stats,
             gpu,
             frame_sender,
+            raw_buffer_counter: std::sync::atomic::AtomicU64::new(0),
         });
         Box::into_raw(data) as *mut core::ffi::c_void
     }

@@ -1,21 +1,32 @@
-use image::codecs::jpeg::JpegEncoder;
-use image::{ImageBuffer, Rgb};
+use turbojpeg::{Compressor, Image, PixelFormat};
 
 /// Compress raw RGB pixel data to JPEG at the given quality (1-100).
+///
+/// Uses libjpeg-turbo via the `turbojpeg` crate for SIMD-accelerated encoding,
+/// typically 3-5x faster than the pure-Rust `image` crate encoder.
 pub fn compress_jpeg(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let img: ImageBuffer<Rgb<u8>, _> =
-        ImageBuffer::from_raw(width, height, data).expect("invalid buffer dimensions");
+    let mut compressor = Compressor::new().expect("failed to create turbojpeg compressor");
+    compressor
+        .set_quality(quality as i32)
+        .expect("failed to set JPEG quality");
 
-    let mut buf = Vec::new();
-    let encoder = JpegEncoder::new_with_quality(&mut buf, quality);
-    img.write_with_encoder(encoder)
-        .expect("JPEG encoding failed");
-    buf
+    let image = Image {
+        pixels: data,
+        width: width as usize,
+        pitch: (width * 3) as usize,
+        height: height as usize,
+        format: PixelFormat::RGB,
+    };
+
+    compressor
+        .compress_to_vec(image)
+        .expect("JPEG encoding failed")
 }
 
 /// Compress and downscale raw RGB data for sidebar thumbnails.
 ///
-/// Uses `fast_image_resize` for SIMD-accelerated resizing, then encodes to JPEG.
+/// Uses `fast_image_resize` for SIMD-accelerated resizing, then encodes to JPEG
+/// via turbojpeg.
 pub fn compress_thumbnail(
     data: &[u8],
     width: u32,
@@ -110,6 +121,21 @@ mod tests {
             thumb.len() < 10_000,
             "thumbnail size {} exceeds 10KB",
             thumb.len()
+        );
+    }
+
+    #[test]
+    fn compress_jpeg_640x480_under_10ms() {
+        let rgb = make_test_rgb(640, 480);
+        let start = std::time::Instant::now();
+        let iterations = 20;
+        for _ in 0..iterations {
+            let _ = compress_jpeg(&rgb, 640, 480, 85);
+        }
+        let avg_ms = start.elapsed().as_millis() as f64 / iterations as f64;
+        assert!(
+            avg_ms < 10.0,
+            "average encode time {avg_ms:.1}ms exceeds 10ms for 640x480"
         );
     }
 }
