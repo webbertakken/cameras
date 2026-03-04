@@ -1,4 +1,4 @@
-/// Convert RGB pixel data to NV12 format.
+/// Convert packed 3-byte pixel data to NV12 format.
 ///
 /// NV12 layout:
 /// - Y plane: width * height bytes (full resolution)
@@ -8,33 +8,38 @@
 ///
 /// Uses BT.601 coefficients for the conversion.
 ///
+/// The input buffer uses **BGR byte order** (blue at offset 0, green at 1,
+/// red at 2). This matches the byte layout produced by `turbojpeg::decompress`
+/// with `PixelFormat::BGR` and by Windows `MFVideoFormat_RGB24` (which is
+/// physically BGR despite the name).
+///
 /// # Panics
 ///
 /// Panics if width or height is odd (NV12 requires even dimensions) or if
-/// `rgb.len()` does not equal `width * height * 3`.
-pub fn rgb_to_nv12(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
+/// `bgr.len()` does not equal `width * height * 3`.
+pub fn bgr_to_nv12(bgr: &[u8], width: u32, height: u32) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
 
     assert!(w % 2 == 0, "NV12 requires even width, got {w}");
     assert!(h % 2 == 0, "NV12 requires even height, got {h}");
     assert_eq!(
-        rgb.len(),
+        bgr.len(),
         w * h * 3,
-        "RGB buffer length mismatch: expected {}, got {}",
+        "BGR buffer length mismatch: expected {}, got {}",
         w * h * 3,
-        rgb.len()
+        bgr.len()
     );
 
     let mut nv12 = vec![0u8; w * h * 3 / 2];
 
-    // Y plane
+    // Y plane — read BGR byte order: [B, G, R]
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) * 3;
-            let r = rgb[i] as f32;
-            let g = rgb[i + 1] as f32;
-            let b = rgb[i + 2] as f32;
+            let b = bgr[i] as f32;
+            let g = bgr[i + 1] as f32;
+            let r = bgr[i + 2] as f32;
             nv12[y * w + x] = (0.299 * r + 0.587 * g + 0.114 * b).clamp(0.0, 255.0) as u8;
         }
     }
@@ -48,9 +53,9 @@ pub fn rgb_to_nv12(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
             for dy in 0..2 {
                 for dx in 0..2 {
                     let i = ((y + dy) * w + (x + dx)) * 3;
-                    r += rgb[i] as f32;
-                    g += rgb[i + 1] as f32;
-                    b += rgb[i + 2] as f32;
+                    b += bgr[i] as f32;
+                    g += bgr[i + 1] as f32;
+                    r += bgr[i + 2] as f32;
                 }
             }
             r /= 4.0;
@@ -72,14 +77,14 @@ pub fn rgb_to_nv12(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Helper: create a flat RGB buffer filled with a single colour.
-    fn solid_rgb(r: u8, g: u8, b: u8, width: u32, height: u32) -> Vec<u8> {
+    /// Helper: create a flat BGR buffer filled with a single colour.
+    fn solid_bgr(b: u8, g: u8, r: u8, width: u32, height: u32) -> Vec<u8> {
         let pixel_count = (width * height) as usize;
         let mut buf = Vec::with_capacity(pixel_count * 3);
         for _ in 0..pixel_count {
-            buf.push(r);
-            buf.push(g);
             buf.push(b);
+            buf.push(g);
+            buf.push(r);
         }
         buf
     }
@@ -87,8 +92,8 @@ mod tests {
     #[test]
     fn output_size_is_correct() {
         for (w, h) in [(640, 480), (1920, 1080), (160, 120)] {
-            let rgb = solid_rgb(0, 0, 0, w, h);
-            let nv12 = rgb_to_nv12(&rgb, w, h);
+            let bgr = solid_bgr(0, 0, 0, w, h);
+            let nv12 = bgr_to_nv12(&bgr, w, h);
             let expected = (w as usize) * (h as usize) * 3 / 2;
             assert_eq!(nv12.len(), expected, "wrong size for {w}x{h}");
         }
@@ -96,24 +101,26 @@ mod tests {
 
     #[test]
     fn pure_red_produces_expected_y() {
-        let rgb = solid_rgb(255, 0, 0, 4, 4);
-        let nv12 = rgb_to_nv12(&rgb, 4, 4);
+        // Pure red in BGR: B=0, G=0, R=255
+        let bgr = solid_bgr(0, 0, 255, 4, 4);
+        let nv12 = bgr_to_nv12(&bgr, 4, 4);
         // BT.601: Y = 0.299 * 255 ≈ 76.245 → 76
         assert_eq!(nv12[0], 76);
     }
 
     #[test]
     fn pure_green_produces_expected_y() {
-        let rgb = solid_rgb(0, 255, 0, 4, 4);
-        let nv12 = rgb_to_nv12(&rgb, 4, 4);
+        // Pure green in BGR: B=0, G=255, R=0
+        let bgr = solid_bgr(0, 255, 0, 4, 4);
+        let nv12 = bgr_to_nv12(&bgr, 4, 4);
         // BT.601: Y = 0.587 * 255 ≈ 149.685 → 149
         assert_eq!(nv12[0], 149);
     }
 
     #[test]
     fn pure_white_produces_neutral_uv() {
-        let rgb = solid_rgb(255, 255, 255, 4, 4);
-        let nv12 = rgb_to_nv12(&rgb, 4, 4);
+        let bgr = solid_bgr(255, 255, 255, 4, 4);
+        let nv12 = bgr_to_nv12(&bgr, 4, 4);
 
         // UV plane starts at w*h = 16
         let uv_offset = 4 * 4;
@@ -126,8 +133,8 @@ mod tests {
 
     #[test]
     fn pure_black_produces_zero_y_and_neutral_uv() {
-        let rgb = solid_rgb(0, 0, 0, 4, 4);
-        let nv12 = rgb_to_nv12(&rgb, 4, 4);
+        let bgr = solid_bgr(0, 0, 0, 4, 4);
+        let nv12 = bgr_to_nv12(&bgr, 4, 4);
 
         // Y should be 0
         assert_eq!(nv12[0], 0);
@@ -139,28 +146,37 @@ mod tests {
     }
 
     #[test]
+    fn pure_blue_produces_expected_y() {
+        // Pure blue in BGR: B=255, G=0, R=0
+        let bgr = solid_bgr(255, 0, 0, 4, 4);
+        let nv12 = bgr_to_nv12(&bgr, 4, 4);
+        // BT.601: Y = 0.114 * 255 ≈ 29.07 → 29
+        assert_eq!(nv12[0], 29);
+    }
+
+    #[test]
     #[should_panic(expected = "NV12 requires even width")]
     fn panics_on_odd_width() {
-        let rgb = solid_rgb(0, 0, 0, 3, 4);
-        rgb_to_nv12(&rgb, 3, 4);
+        let bgr = solid_bgr(0, 0, 0, 3, 4);
+        bgr_to_nv12(&bgr, 3, 4);
     }
 
     #[test]
     #[should_panic(expected = "NV12 requires even height")]
     fn panics_on_odd_height() {
-        let rgb = solid_rgb(0, 0, 0, 4, 3);
-        rgb_to_nv12(&rgb, 4, 3);
+        let bgr = solid_bgr(0, 0, 0, 4, 3);
+        bgr_to_nv12(&bgr, 4, 3);
     }
 
     #[test]
     fn conversion_performance_under_5ms_at_640x480() {
-        let rgb = solid_rgb(128, 64, 200, 640, 480);
+        let bgr = solid_bgr(64, 128, 200, 640, 480);
 
         // Warm up to avoid cold-cache effects
-        let _ = rgb_to_nv12(&rgb, 640, 480);
+        let _ = bgr_to_nv12(&bgr, 640, 480);
 
         let start = std::time::Instant::now();
-        let _ = rgb_to_nv12(&rgb, 640, 480);
+        let _ = bgr_to_nv12(&bgr, 640, 480);
         let elapsed = start.elapsed();
 
         // Debug builds are ~2-3x slower; use relaxed threshold

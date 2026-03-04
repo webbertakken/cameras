@@ -43,8 +43,10 @@ pub fn run_frame_pump(
             }
         };
 
-        // Decode JPEG to RGB via turbojpeg
-        let image = match turbojpeg::decompress(&frame.jpeg_bytes, turbojpeg::PixelFormat::RGB) {
+        // Decode JPEG to BGR via turbojpeg — NV12 conversion expects BGR byte
+        // order to match the Windows MFVideoFormat_RGB24 convention (which is
+        // physically BGR despite the name).
+        let image = match turbojpeg::decompress(&frame.jpeg_bytes, turbojpeg::PixelFormat::BGR) {
             Ok(img) => img,
             Err(e) => {
                 error!("Frame pump: JPEG decode failed: {e}");
@@ -57,8 +59,10 @@ pub fn run_frame_pump(
         let target_w = vcam_shared::DEFAULT_WIDTH;
         let target_h = vcam_shared::DEFAULT_HEIGHT;
 
-        // Resize if the decoded frame doesn't match shared memory dimensions
-        let rgb_data = if src_w == target_w && src_h == target_h {
+        // Resize if the decoded frame doesn't match shared memory dimensions.
+        // The resize operates on opaque 3-byte pixels (U8x3), so byte order is
+        // preserved regardless of whether data is BGR or RGB.
+        let bgr_data = if src_w == target_w && src_h == target_h {
             image.pixels
         } else {
             match resize_rgb(image.pixels, src_w, src_h, target_w, target_h) {
@@ -70,7 +74,7 @@ pub fn run_frame_pump(
             }
         };
 
-        let nv12_data = nv12::rgb_to_nv12(&rgb_data, target_w, target_h);
+        let nv12_data = nv12::bgr_to_nv12(&bgr_data, target_w, target_h);
         shm_writer.write_frame(&nv12_data);
 
         frames_delivered += 1;
