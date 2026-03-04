@@ -1,6 +1,7 @@
 fn main() {
     configure_edsdk();
     copy_vcam_source_dll();
+    stage_msix_assets();
 
     let windows =
         tauri_build::WindowsAttributes::new().app_manifest(include_str!("cameras.exe.manifest"));
@@ -160,6 +161,38 @@ fn configure_edsdk_macos(canon_base: &std::path::Path) {
     println!("cargo:rustc-link-lib=framework=EDSDK");
 
     println!("cargo:rerun-if-changed={}", sdk_dir.display());
+}
+
+/// Stage `AppxManifest.xml` and icon into the target directory for MSIX
+/// sparse package registration during development.
+///
+/// This enables `scripts/register-vcam-dev.ps1` to register the package
+/// without manual file copying — the manifest and icon are always fresh.
+fn stage_msix_assets() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "windows" {
+        return;
+    }
+
+    let manifest_dir =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let target_dir = resolve_target_dir();
+
+    // Copy AppxManifest.xml
+    let manifest_src = manifest_dir.join("msix").join("AppxManifest.xml");
+    if manifest_src.exists() {
+        copy_sdk_file(&manifest_src, &target_dir.join("AppxManifest.xml"));
+    }
+
+    // Copy icon (AppxManifest references icons\icon.png)
+    let icon_src = manifest_dir.join("icons").join("icon.png");
+    let icon_dst_dir = target_dir.join("icons");
+    if icon_src.exists() {
+        let _ = std::fs::create_dir_all(&icon_dst_dir);
+        copy_sdk_file(&icon_src, &icon_dst_dir.join("icon.png"));
+    }
+
+    println!("cargo:rerun-if-changed={}", manifest_src.display());
 }
 
 /// Resolve the target output directory from OUT_DIR.

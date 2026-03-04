@@ -3,8 +3,9 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
-  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
-  IgnorableNamespaces="uap10">
+  xmlns:com4="http://schemas.microsoft.com/appx/manifest/com/windows10/4"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap10 rescap">
 
   <Identity
     Name="io.takken.cameras"
@@ -31,6 +32,7 @@
   </Dependencies>
 
   <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
     <DeviceCapability Name="webcam" />
   </Capabilities>
 
@@ -39,8 +41,7 @@
       Id="CamerasApp"
       Executable="cameras.exe"
       uap10:TrustLevel="mediumIL"
-      uap10:RuntimeBehavior="win32App"
-      EntryPoint="windows.none">
+      uap10:RuntimeBehavior="win32App">
 
       <uap:VisualElements
         DisplayName="Cameras Virtual Camera"
@@ -51,16 +52,15 @@
         BackgroundColor="#FFFFFF" />
 
       <Extensions>
-        <com:Extension Category="windows.comServer">
-          <com:ComServer>
-            <com:InProcessServer Path="vcam_source.dll">
-              <com:Class
+        <com4:Extension Category="windows.comServer">
+          <com4:ComServer>
+            <com4:InProcessServer Path="vcam_source.dll">
+              <com4:Class
                 Id="7B2E3A1F-4D5C-4E8B-9A6F-1C2D3E4F5A6B"
-                DisplayName="Cameras App Virtual Camera Source"
                 ThreadingModel="Both" />
-            </com:InProcessServer>
-          </com:ComServer>
-        </com:Extension>
+            </com4:InProcessServer>
+          </com4:ComServer>
+        </com4:Extension>
       </Extensions>
 
     </Application>
