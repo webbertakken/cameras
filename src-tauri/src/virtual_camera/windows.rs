@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 
 use tracing::{debug, error, info, warn};
 use windows::core::{GUID, HSTRING};
+use windows::Win32::Devices::Properties::DEVPROP_TYPE_GUID;
 use windows::Win32::Media::KernelStreaming::KSCATEGORY_VIDEO_CAMERA;
 use windows::Win32::Media::MediaFoundation::{
     IMFVirtualCamera, MFCreateVirtualCamera, MFVirtualCameraAccess_CurrentUser,
@@ -82,6 +83,11 @@ impl MfVirtualCamera {
         })?;
 
         info!("Created MF virtual camera: '{friendly_name}'");
+
+        // Set the device class GUID to Camera so DirectShow-based apps (OBS)
+        // can discover this device. Without this, MFCreateVirtualCamera
+        // registers the device under SoftwareDevice which DirectShow ignores.
+        set_camera_class_guid(&vcam)?;
 
         info!("Starting IMFVirtualCamera...");
         unsafe { vcam.Start(None) }.map_err(|e| {
@@ -204,6 +210,43 @@ impl Drop for MfVirtualCamera {
 }
 
 // ---------------------------------------------------------------------------
+// Device property helpers
+// ---------------------------------------------------------------------------
+
+/// Camera device class GUID: `{ca3e7ab9-b4c3-4ae6-8251-579ef933890f}`.
+///
+/// Devices in this class appear in DirectShow enumeration (used by OBS).
+/// Without this, MFCreateVirtualCamera registers under `SoftwareDevice`.
+const CAMERA_CLASS_GUID: GUID = GUID::from_u128(0xca3e7ab9_b4c3_4ae6_8251_579ef933890f);
+
+/// Set `DEVPKEY_Device_ClassGuid` to the Camera class on the virtual camera
+/// device so DirectShow-based consumers (OBS, older apps) can discover it.
+fn set_camera_class_guid(vcam: &IMFVirtualCamera) -> Result<(), String> {
+    use windows::Win32::Devices::Properties::DEVPKEY_Device_ClassGuid;
+
+    // Serialise the GUID as a 16-byte Windows GUID structure (little-endian)
+    let mut guid_bytes = [0u8; 16];
+    guid_bytes[0..4].copy_from_slice(&CAMERA_CLASS_GUID.data1.to_le_bytes());
+    guid_bytes[4..6].copy_from_slice(&CAMERA_CLASS_GUID.data2.to_le_bytes());
+    guid_bytes[6..8].copy_from_slice(&CAMERA_CLASS_GUID.data3.to_le_bytes());
+    guid_bytes[8..16].copy_from_slice(&CAMERA_CLASS_GUID.data4);
+
+    info!(
+        "Setting DEVPKEY_Device_ClassGuid to Camera class ({:?})...",
+        CAMERA_CLASS_GUID
+    );
+
+    unsafe { vcam.AddProperty(&DEVPKEY_Device_ClassGuid, DEVPROP_TYPE_GUID, &guid_bytes) }
+        .map_err(|e| {
+            error!("IMFVirtualCamera::AddProperty(ClassGuid) failed: {e}");
+            format!("failed to set Camera class GUID: {e}")
+        })?;
+
+    info!("Camera class GUID set successfully");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // CLSID helpers
 // ---------------------------------------------------------------------------
 
@@ -265,6 +308,30 @@ mod tests {
 
         // Clean up
         vcam.pump_running.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn camera_class_guid_matches_expected_value() {
+        // {ca3e7ab9-b4c3-4ae6-8251-579ef933890f} is the Camera device class
+        assert_eq!(CAMERA_CLASS_GUID.data1, 0xca3e7ab9);
+        assert_eq!(CAMERA_CLASS_GUID.data2, 0xb4c3);
+        assert_eq!(CAMERA_CLASS_GUID.data3, 0x4ae6);
+        assert_eq!(
+            CAMERA_CLASS_GUID.data4,
+            [0x82, 0x51, 0x57, 0x9e, 0xf9, 0x33, 0x89, 0x0f]
+        );
+    }
+
+    #[test]
+    fn camera_class_guid_serialises_to_16_bytes() {
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&CAMERA_CLASS_GUID.data1.to_le_bytes());
+        bytes[4..6].copy_from_slice(&CAMERA_CLASS_GUID.data2.to_le_bytes());
+        bytes[6..8].copy_from_slice(&CAMERA_CLASS_GUID.data3.to_le_bytes());
+        bytes[8..16].copy_from_slice(&CAMERA_CLASS_GUID.data4);
+        assert_eq!(bytes.len(), 16);
+        // First 4 bytes should be data1 in little-endian
+        assert_eq!(&bytes[0..4], &[0xb9, 0x7a, 0x3e, 0xca]);
     }
 
     #[test]
