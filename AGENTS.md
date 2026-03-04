@@ -16,6 +16,12 @@
 - No implementation code without corresponding tests
 - Use `chainlink` cli for tracking issues and tasks (`.chainlink/` is gitignored)
 
+## Virtual camera dev setup
+
+- **Register**: `pwsh scripts/register-vcam-dev.ps1` (one-time, re-run after CLSID or manifest changes)
+- **Register (release)**: `pwsh scripts/register-vcam-dev.ps1 -Release`
+- **Unregister**: `pwsh scripts/register-vcam-dev.ps1 -Unregister`
+
 ## Dev server
 
 - **Start**: `./scripts/dev-harness.sh start` (captures logs to `tmp/dev-server.log`)

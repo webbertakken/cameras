@@ -3,8 +3,8 @@
     Registers the virtual camera MSIX sparse package for local development.
 
 .DESCRIPTION
-    Builds vcam_source.dll (debug), stages the AppxManifest.xml and icon into
-    the target/debug directory, then registers the sparse package pointing at
+    Builds vcam_source.dll, stages the AppxManifest.xml and icon into
+    the target directory, then registers the sparse package pointing at
     that directory. After this, MFCreateVirtualCamera can resolve the CLSID
     via COM redirection without needing an installed NSIS package.
 
@@ -13,20 +13,26 @@
 .PARAMETER Unregister
     Remove the registered sparse package instead of registering it.
 
+.PARAMETER Release
+    Use target/release instead of target/debug.
+
 .EXAMPLE
     .\register-vcam-dev.ps1
+    .\register-vcam-dev.ps1 -Release
     .\register-vcam-dev.ps1 -Unregister
 #>
 
 param(
-    [switch]$Unregister
+    [switch]$Unregister,
+    [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $TauriDir = Join-Path $ProjectRoot 'src-tauri'
-$TargetDir = Join-Path $TauriDir 'target' 'debug'
+$Profile = if ($Release) { 'release' } else { 'debug' }
+$TargetDir = Join-Path $TauriDir 'target' $Profile
 $MsixDir = Join-Path $TauriDir 'msix'
 $ManifestSource = Join-Path $MsixDir 'AppxManifest.xml'
 $IconSource = Join-Path $TauriDir 'icons' 'icon.png'
@@ -45,10 +51,12 @@ if ($Unregister) {
 }
 
 # Step 1: Build vcam_source.dll
-Write-Host 'Building vcam_source.dll (debug)...'
+$buildArgs = @('build', '-p', 'vcam-source')
+if ($Release) { $buildArgs += '--release' }
+Write-Host "Building vcam_source.dll ($Profile)..."
 Push-Location $TauriDir
 try {
-    cargo build -p vcam-source
+    & cargo @buildArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Error 'cargo build -p vcam-source failed'
     }
