@@ -87,7 +87,10 @@ impl MfVirtualCamera {
         // Set the device class GUID to Camera so DirectShow-based apps (OBS)
         // can discover this device. Without this, MFCreateVirtualCamera
         // registers the device under SoftwareDevice which DirectShow ignores.
-        set_camera_class_guid(&vcam)?;
+        // Non-fatal: requires elevation, so we warn and continue without it.
+        if let Err(e) = set_camera_class_guid(&vcam) {
+            warn!("Could not set Camera class GUID (OBS may not see this device): {e}");
+        }
 
         info!("Starting IMFVirtualCamera...");
         unsafe { vcam.Start(None) }.map_err(|e| {
