@@ -1,10 +1,11 @@
 pub mod commands;
 pub mod frame_pump;
 pub mod nv12;
-pub mod stub;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub mod stub;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
