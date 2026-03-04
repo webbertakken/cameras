@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod nv12;
 pub mod stub;
 
 #[cfg(target_os = "linux")]
