@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vcam-shared"]
+members = [".", "crates/vcam-shared", "crates/vcam-source"]
 
 [package]
 name = "cameras"
