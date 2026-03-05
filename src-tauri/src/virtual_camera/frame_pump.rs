@@ -6,45 +6,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::{error, info, trace};
+use vcam_shared::SharedMemoryOwner;
 
 use crate::preview::encode_worker::JpegFrameBuffer;
 use crate::virtual_camera::nv12;
 
 /// Run the frame pump loop on the current thread.
 ///
-/// Opens the shared memory mapping created by the COM DLL via
-/// `SharedMemoryProducer`, then polls `jpeg_buffer` for new JPEG frames,
-/// decodes them via turbojpeg, converts RGB to NV12, and writes into shared
-/// memory. Exits when `running` is set to `false`.
-///
-/// The pump retries opening the shared memory for up to 5 seconds (the COM
-/// DLL creates the mapping asynchronously when FrameServer loads it).
+/// Polls `jpeg_buffer` for new JPEG frames, decodes them via turbojpeg,
+/// converts RGB to NV12, and writes into the pre-created `SharedMemoryOwner`.
+/// Exits when `running` is set to `false`.
 pub fn run_frame_pump(
     jpeg_buffer: Arc<JpegFrameBuffer>,
-    shm_name: String,
+    shm_owner: Arc<SharedMemoryOwner>,
     running: Arc<AtomicBool>,
 ) {
-    info!("Frame pump started — connecting to shared memory...");
-
-    // Retry opening the shared memory for up to 5 seconds.
-    let mut retries = 0u32;
-    let shm_producer = loop {
-        match vcam_shared::SharedMemoryProducer::open(&shm_name) {
-            Ok(p) => break p,
-            Err(e) => {
-                retries += 1;
-                if retries > 50 || !running.load(Ordering::Relaxed) {
-                    error!("Failed to connect to shared memory after {retries} retries: {e}");
-                    return;
-                }
-                if retries == 1 {
-                    info!("Waiting for shared memory '{shm_name}' (COM DLL must create it)...");
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    };
-    info!("Frame pump connected to shared memory '{shm_name}'");
+    info!("Frame pump started");
 
     let mut last_seq = 0u64;
     let mut frames_delivered = 0u64;
@@ -97,7 +74,7 @@ pub fn run_frame_pump(
         };
 
         let nv12_data = nv12::bgr_to_nv12(&bgr_data, target_w, target_h);
-        shm_producer.write_frame(&nv12_data);
+        shm_owner.write_frame(&nv12_data);
 
         frames_delivered += 1;
         if frames_delivered == 1 {
@@ -206,26 +183,18 @@ mod tests {
             encoder_kind: EncoderKind::CpuFallback,
         });
 
-        let shm_name = format!(
-            r"Local\VcamPumpTest_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pump_test_shm.bin");
 
-        // SharedMemoryWriter creates the mapping (simulates what SharedMemoryOwner
-        // does in production). SharedMemoryProducer inside the pump opens it.
-        let _shm_writer =
-            vcam_shared::SharedMemoryWriter::new(&shm_name, target_w, target_h, 3).unwrap();
-        let shm_reader = vcam_shared::SharedMemoryReader::open(&shm_name).unwrap();
+        let shm_owner = Arc::new(SharedMemoryOwner::new(&path, target_w, target_h, 3).unwrap());
+        let shm_reader = vcam_shared::SharedMemoryReader::open_file(&path).unwrap();
 
         let running_clone = Arc::clone(&running);
         let jpeg_buffer_clone = Arc::clone(&jpeg_buffer);
-        let shm_name_clone = shm_name.clone();
+        let shm_owner_clone = Arc::clone(&shm_owner);
 
         let pump_thread = std::thread::spawn(move || {
-            run_frame_pump(jpeg_buffer_clone, shm_name_clone, running_clone);
+            run_frame_pump(jpeg_buffer_clone, shm_owner_clone, running_clone);
         });
 
         // Wait for the pump to write a frame
@@ -244,32 +213,10 @@ mod tests {
         let frame = shm_reader.read_frame().expect("should have a frame");
         let expected_size = (target_w as usize) * (target_h as usize) * 3 / 2;
         assert_eq!(frame.len(), expected_size);
-    }
 
-    #[test]
-    fn frame_pump_skips_duplicate_frames() {
-        let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
-        let running = Arc::new(AtomicBool::new(false));
-
-        // With running=false, the pump exits immediately during the retry loop.
-        // This is a sanity check that the function doesn't panic.
-        #[cfg(windows)]
-        {
-            let shm_name = format!(
-                r"Local\VcamPumpSkip_{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
-            run_frame_pump(jpeg_buffer, shm_name, running);
-        }
-
-        #[cfg(not(windows))]
-        {
-            // On non-Windows, just verify the function signature compiles
-            let _ = (jpeg_buffer, running);
-        }
+        // Drop reader before owner so the file can be deleted.
+        drop(shm_reader);
+        drop(shm_owner);
     }
 
     #[test]

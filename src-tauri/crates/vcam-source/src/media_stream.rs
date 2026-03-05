@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vcam_shared::SharedMemoryOwner;
+use vcam_shared::SharedMemoryReader;
 
 use windows::Win32::Foundation::{E_NOTIMPL, S_OK};
 use windows::Win32::Media::MediaFoundation::{
@@ -34,9 +34,9 @@ pub(crate) struct VCamMediaStream {
     stream_descriptor: IMFStreamDescriptor,
     shutdown: AtomicBool,
     stream_state: Mutex<MF_STREAM_STATE>,
-    /// Shared memory owner created by VCamMediaSource. Read frames directly
-    /// from the owner's mapped region instead of opening SharedMemoryReader.
-    shm_owner: Option<Arc<SharedMemoryOwner>>,
+    /// Shared memory reader opened from the file-backed IPC region.
+    /// Reads frames written by the app's SharedMemoryOwner.
+    shm_reader: Option<Arc<SharedMemoryReader>>,
     /// Last sequence number we delivered, to avoid re-delivering the same frame.
     last_sequence: Mutex<u64>,
 }
@@ -44,11 +44,11 @@ pub(crate) struct VCamMediaStream {
 impl VCamMediaStream {
     /// Create a new media stream.
     ///
-    /// `shm_owner` is the shared memory owner created by VCamMediaSource.
-    /// The stream reads frames directly from the owner's mapped region.
+    /// `shm_reader` is the shared memory reader opened from the file-backed
+    /// IPC region. If `None`, the stream delivers black frames.
     pub(crate) fn new(
         stream_descriptor: &IMFStreamDescriptor,
-        shm_owner: Option<Arc<SharedMemoryOwner>>,
+        shm_reader: Option<Arc<SharedMemoryReader>>,
     ) -> windows_core::Result<Self> {
         let event_queue = unsafe { MFCreateEventQueue()? };
         increment_object_count();
@@ -68,7 +68,7 @@ impl VCamMediaStream {
             stream_descriptor: stream_descriptor.clone(),
             shutdown: AtomicBool::new(false),
             stream_state: Mutex::new(MF_STREAM_STATE_STOPPED),
-            shm_owner,
+            shm_reader,
             last_sequence: Mutex::new(0),
         })
     }
@@ -109,8 +109,8 @@ impl VCamMediaStream {
     /// Read a frame from shared memory, or generate a black NV12 frame if
     /// shared memory is not available.
     fn read_frame_or_black(&self) -> (Vec<u8>, u32, u32) {
-        if let Some(ref owner) = self.shm_owner {
-            let header = owner.header();
+        if let Some(ref reader) = self.shm_reader {
+            let header = reader.header();
             let width = header.width;
             let height = header.height;
             let seq = header.sequence.load(Ordering::Acquire);
@@ -118,12 +118,12 @@ impl VCamMediaStream {
             let mut last_seq = self.last_sequence.lock().unwrap();
             if seq > *last_seq {
                 *last_seq = seq;
-                if let Some(data) = owner.read_frame() {
+                if let Some(data) = reader.read_frame() {
                     return (data.to_vec(), width, height);
                 }
             }
         } else {
-            crate::trace::trace("WARN: read_frame_or_black called but no SharedMemoryOwner set");
+            crate::trace::trace("WARN: read_frame_or_black called but no SharedMemoryReader set");
         }
 
         // Fall back to a black NV12 frame.

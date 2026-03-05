@@ -1,95 +1,100 @@
 #[cfg(windows)]
 mod platform {
+    use std::path::{Path, PathBuf};
     use std::ptr;
     use std::sync::atomic::Ordering;
 
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{
-        CloseHandle, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
-    };
-    use windows::Win32::Security::{
-        AddAccessAllowedAce, AllocateAndInitializeSid, GetLengthSid, InitializeAcl,
-        InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACL, ACL_REVISION,
-        PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-        SID_IDENTIFIER_AUTHORITY,
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, DeleteFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_ALWAYS,
     };
     use windows::Win32::System::Memory::{
         CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
     };
-    use windows::Win32::System::Threading::CreateEventW;
 
     use crate::error::Error;
     use crate::ring_buffer::{PixelFormat, SharedFrameHeader, MAGIC, VERSION};
 
-    /// SECURITY_NT_AUTHORITY = {0,0,0,0,0,5}
-    const SECURITY_NT_AUTHORITY: SID_IDENTIFIER_AUTHORITY = SID_IDENTIFIER_AUTHORITY {
-        Value: [0, 0, 0, 0, 0, 5],
-    };
-
-    /// SECURITY_INTERACTIVE_RID (S-1-5-4) — all interactive logon users.
-    const SECURITY_INTERACTIVE_RID: u32 = 4;
-
-    /// SECURITY_LOCAL_SERVICE_RID (S-1-5-19) — LOCAL SERVICE account.
-    const SECURITY_LOCAL_SERVICE_RID: u32 = 19;
-
-    /// SECURITY_DESCRIPTOR_REVISION — version 1.
-    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
-
-    /// Creates and owns a `Global\` shared memory mapping with an explicit DACL.
+    /// Creates and owns a file-backed shared memory region.
     ///
-    /// Used by the COM DLL (loaded by FrameServer as LOCAL SERVICE) to create the
-    /// shared memory region. The DACL grants:
-    /// - LOCAL SERVICE: `GENERIC_ALL`
-    /// - Interactive users: `GENERIC_READ | GENERIC_WRITE`
+    /// Used by the main app to create a shared memory file that the COM DLL
+    /// (loaded by FrameServer as LOCAL SERVICE) opens for reading. The file
+    /// path is universal — it works across all sessions and kernel object
+    /// namespaces.
     pub struct SharedMemoryOwner {
+        file_handle: HANDLE,
         mapping_handle: HANDLE,
-        event_handle: HANDLE,
         base_ptr: *mut u8,
-        _frame_size: u32,
-        _slot_count: u32,
+        file_path: PathBuf,
+        frame_size: u32,
+        slot_count: u32,
     }
 
     // SAFETY: The shared memory region is process-shared and synchronised via
-    // atomics + event signalling. The owner is the sole creator.
+    // atomics. The owner is the sole creator and writer.
     unsafe impl Send for SharedMemoryOwner {}
     unsafe impl Sync for SharedMemoryOwner {}
 
     impl SharedMemoryOwner {
-        /// Create a new named shared memory region in the Global namespace.
+        /// Create a file-backed shared memory region.
         ///
-        /// Sets a DACL granting:
-        /// - LOCAL SERVICE: `GENERIC_ALL`
-        /// - Interactive users: `GENERIC_READ | GENERIC_WRITE`
-        pub fn new(name: &str, width: u32, height: u32, slot_count: u32) -> Result<Self, Error> {
+        /// Creates (or overwrites) the file at `file_path`, sets its size,
+        /// creates a file mapping, and initialises the ring buffer header.
+        pub fn new(
+            file_path: &Path,
+            width: u32,
+            height: u32,
+            slot_count: u32,
+        ) -> Result<Self, Error> {
             let total_size = SharedFrameHeader::total_size(width, height, slot_count);
             let frame_size = SharedFrameHeader::nv12_frame_size(width, height);
 
-            let wide_name = to_wide(name);
-            let event_name_str = format!("{name}_event");
-            let wide_event_name = to_wide(&event_name_str);
+            let wide_path = path_to_wide(file_path);
 
-            // Build security descriptor with DACL.
-            let (sd, _acl_buf, _sid_ls, _sid_iu) = build_security_descriptor()?;
-
-            let sa = SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: &sd as *const SECURITY_DESCRIPTOR as *mut _,
-                bInheritHandle: false.into(),
-            };
-
-            // SAFETY: Creating a named file mapping with explicit security.
-            let mapping_handle = unsafe {
-                CreateFileMappingW(
-                    INVALID_HANDLE_VALUE,
-                    Some(&sa),
-                    PAGE_READWRITE,
-                    (total_size >> 32) as u32,
-                    total_size as u32,
-                    PCWSTR(wide_name.as_ptr()),
+            // Open or create the file with read-write access, allowing readers
+            // to open it concurrently.
+            let file_handle = unsafe {
+                CreateFileW(
+                    PCWSTR(wide_path.as_ptr()),
+                    (GENERIC_READ | GENERIC_WRITE).0,
+                    FILE_SHARE_READ,
+                    None,
+                    OPEN_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
                 )?
             };
 
-            // SAFETY: Mapping the entire region as read-write.
+            // Set the file size by seeking to the desired end and truncating.
+            if let Err(e) = set_file_size(file_handle, total_size as u64) {
+                unsafe {
+                    let _ = CloseHandle(file_handle);
+                }
+                return Err(e);
+            }
+
+            // Create a file mapping over the backing file.
+            let mapping_handle = match unsafe {
+                CreateFileMappingW(
+                    file_handle,
+                    None,
+                    PAGE_READWRITE,
+                    (total_size >> 32) as u32,
+                    total_size as u32,
+                    PCWSTR::null(),
+                )
+            } {
+                Ok(h) => h,
+                Err(e) => {
+                    unsafe {
+                        let _ = CloseHandle(file_handle);
+                    }
+                    return Err(e.into());
+                }
+            };
+
+            // Map the entire file into memory.
             let base_ptr = unsafe {
                 MapViewOfFile(mapping_handle, FILE_MAP_ALL_ACCESS, 0, 0, total_size).Value
                     as *mut u8
@@ -99,13 +104,10 @@ mod platform {
                 let err = windows::core::Error::from_thread();
                 unsafe {
                     let _ = CloseHandle(mapping_handle);
+                    let _ = CloseHandle(file_handle);
                 }
                 return Err(err.into());
             }
-
-            // SAFETY: Creating a named auto-reset event with the same DACL.
-            let event_handle =
-                unsafe { CreateEventW(Some(&sa), false, false, PCWSTR(wide_event_name.as_ptr()))? };
 
             // Zero the entire region.
             // SAFETY: base_ptr is valid for total_size bytes.
@@ -123,12 +125,49 @@ mod platform {
             header.slot_count = slot_count;
 
             Ok(Self {
+                file_handle,
                 mapping_handle,
-                event_handle,
                 base_ptr,
-                _frame_size: frame_size,
-                _slot_count: slot_count,
+                file_path: file_path.to_owned(),
+                frame_size,
+                slot_count,
             })
+        }
+
+        /// Write a single NV12 frame into the next ring buffer slot.
+        ///
+        /// # Panics
+        /// Panics if `nv12_data.len()` does not match the expected frame size.
+        pub fn write_frame(&self, nv12_data: &[u8]) {
+            assert_eq!(
+                nv12_data.len(),
+                self.frame_size as usize,
+                "frame data size mismatch"
+            );
+
+            let header = self.header();
+
+            // Determine slot to write into.
+            let slot = header.write_index.load(Ordering::Acquire) % self.slot_count;
+            let offset = SharedFrameHeader::slot_offset(slot, self.frame_size);
+
+            // SAFETY: offset + frame_size <= total_size by construction.
+            unsafe {
+                let dst = self.base_ptr.add(offset);
+                ptr::copy_nonoverlapping(nv12_data.as_ptr(), dst, nv12_data.len());
+            }
+
+            // Advance write_index and bump sequence.
+            header
+                .write_index
+                .store(slot.wrapping_add(1), Ordering::Release);
+            header.sequence.fetch_add(1, Ordering::Release);
+        }
+
+        /// Access the shared frame header.
+        pub fn header(&self) -> &SharedFrameHeader {
+            // SAFETY: base_ptr is valid and points to a SharedFrameHeader.
+            unsafe { &*(self.base_ptr as *const SharedFrameHeader) }
         }
 
         /// Read the latest frame from the ring buffer.
@@ -151,21 +190,14 @@ mod platform {
             })
         }
 
-        /// Access the shared frame header.
-        pub fn header(&self) -> &SharedFrameHeader {
-            // SAFETY: base_ptr is valid and points to a SharedFrameHeader.
-            unsafe { &*(self.base_ptr as *const SharedFrameHeader) }
+        /// Current sequence number.
+        pub fn sequence(&self) -> u64 {
+            self.header().sequence.load(Ordering::Acquire)
         }
 
-        /// Wait for new frame signal with timeout (millis).
-        ///
-        /// Returns `true` if signalled, `false` on timeout.
-        pub fn wait_frame(&self, timeout_ms: u32) -> bool {
-            use windows::Win32::Foundation::WAIT_OBJECT_0;
-            use windows::Win32::System::Threading::WaitForSingleObject;
-
-            let result = unsafe { WaitForSingleObject(self.event_handle, timeout_ms) };
-            result == WAIT_OBJECT_0
+        /// Current write index (raw, not wrapped).
+        pub fn write_index(&self) -> u32 {
+            self.header().write_index.load(Ordering::Acquire)
         }
     }
 
@@ -177,109 +209,35 @@ mod platform {
                 };
                 let _ = UnmapViewOfFile(view);
                 let _ = CloseHandle(self.mapping_handle);
-                let _ = CloseHandle(self.event_handle);
+                let _ = CloseHandle(self.file_handle);
+
+                // Delete the backing file.
+                let wide_path = path_to_wide(&self.file_path);
+                let _ = DeleteFileW(PCWSTR(wide_path.as_ptr()));
             }
         }
     }
 
-    /// Build a SECURITY_DESCRIPTOR with a DACL granting LOCAL SERVICE full access
-    /// and interactive users read+write access.
-    ///
-    /// Returns the SD, the ACL buffer (must outlive the SD), and the two SIDs
-    /// (must outlive the ACL).
-    fn build_security_descriptor() -> Result<(SECURITY_DESCRIPTOR, Vec<u8>, PSID, PSID), Error> {
-        // Allocate SIDs.
-        let sid_local_service = allocate_sid(SECURITY_LOCAL_SERVICE_RID)?;
-        let sid_interactive = allocate_sid(SECURITY_INTERACTIVE_RID)?;
-
-        // Calculate ACL size: base ACL header + 2 ACEs.
-        let ace_size = |sid: PSID| -> usize {
-            let sid_len = unsafe { GetLengthSid(sid) } as usize;
-            // ACE header (4 bytes) + Mask (4 bytes) + SID length
-            4 + 4 + sid_len
-        };
-
-        let acl_header_size = std::mem::size_of::<ACL>();
-        let acl_size = acl_header_size + ace_size(sid_local_service) + ace_size(sid_interactive);
-
-        let mut acl_buf = vec![0u8; acl_size];
-
-        // SAFETY: Initialising ACL in our buffer.
+    /// Set the file size using `SetFilePointerEx` + `SetEndOfFile`.
+    fn set_file_size(handle: HANDLE, size: u64) -> Result<(), Error> {
+        use windows::Win32::Storage::FileSystem::{SetEndOfFile, SetFilePointerEx, FILE_BEGIN};
+        let mut new_pos = 0i64;
         unsafe {
-            InitializeAcl(
-                acl_buf.as_mut_ptr() as *mut _,
-                acl_size as u32,
-                ACL_REVISION,
-            )?;
+            SetFilePointerEx(handle, size as i64, Some(&mut new_pos), FILE_BEGIN)?;
+            SetEndOfFile(handle)?;
+            // Seek back to the beginning.
+            SetFilePointerEx(handle, 0, None, FILE_BEGIN)?;
         }
-
-        // Add ACE: LOCAL SERVICE gets GENERIC_ALL.
-        unsafe {
-            AddAccessAllowedAce(
-                acl_buf.as_mut_ptr() as *mut _,
-                ACL_REVISION,
-                GENERIC_ALL.0,
-                sid_local_service,
-            )?;
-        }
-
-        // Add ACE: Interactive users get GENERIC_READ | GENERIC_WRITE.
-        unsafe {
-            AddAccessAllowedAce(
-                acl_buf.as_mut_ptr() as *mut _,
-                ACL_REVISION,
-                GENERIC_READ.0 | GENERIC_WRITE.0,
-                sid_interactive,
-            )?;
-        }
-
-        // Build the security descriptor.
-        let mut sd = SECURITY_DESCRIPTOR::default();
-        unsafe {
-            InitializeSecurityDescriptor(
-                PSECURITY_DESCRIPTOR(&mut sd as *mut _ as *mut _),
-                SECURITY_DESCRIPTOR_REVISION,
-            )?;
-        }
-
-        // Set the DACL on the descriptor.
-        unsafe {
-            SetSecurityDescriptorDacl(
-                PSECURITY_DESCRIPTOR(&mut sd as *mut _ as *mut _),
-                true,
-                Some(acl_buf.as_ptr() as *const _),
-                false,
-            )?;
-        }
-
-        Ok((sd, acl_buf, sid_local_service, sid_interactive))
+        Ok(())
     }
 
-    /// Allocate a well-known SID from NT AUTHORITY with a single sub-authority.
-    fn allocate_sid(rid: u32) -> Result<PSID, Error> {
-        let mut sid = PSID::default();
-        // SAFETY: Allocating a well-known SID.
-        unsafe {
-            AllocateAndInitializeSid(
-                &SECURITY_NT_AUTHORITY,
-                1,
-                rid,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                &mut sid,
-            )?;
-        }
-        Ok(sid)
-    }
-
-    /// Encode a Rust `&str` as a null-terminated UTF-16 wide string.
-    fn to_wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
+    /// Convert a `Path` to a null-terminated UTF-16 wide string.
+    fn path_to_wide(path: &Path) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 }
 

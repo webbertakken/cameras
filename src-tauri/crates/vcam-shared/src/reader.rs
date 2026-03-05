@@ -3,7 +3,7 @@ mod platform {
     use std::sync::atomic::Ordering;
 
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE, WAIT_OBJECT_0};
     use windows::Win32::System::Memory::{
         MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_READ,
     };
@@ -14,22 +14,29 @@ mod platform {
     use crate::error::Error;
     use crate::ring_buffer::{SharedFrameHeader, MAGIC, VERSION};
 
-    /// Reads NV12 frames from a named shared memory ring buffer.
+    /// Reads NV12 frames from a shared memory ring buffer.
     ///
-    /// Created by the COM DLL (virtual camera filter). The main application
-    /// writes frames via [`SharedMemoryWriter`](crate::writer::SharedMemoryWriter).
+    /// Supports two modes:
+    /// - `open(name)`: opens a named kernel object (for tests using `Local\` names)
+    /// - `open_file(path)`: opens a file-backed shared memory region (for production)
     pub struct SharedMemoryReader {
         mapping_handle: HANDLE,
-        event_handle: HANDLE,
+        /// File handle when opened via `open_file`. `None` for named mappings.
+        file_handle: Option<HANDLE>,
+        /// Event handle for frame signalling. `None` for file-backed mode.
+        event_handle: Option<HANDLE>,
         base_ptr: *const u8,
         _total_size: usize,
     }
 
     // SAFETY: same rationale as SharedMemoryWriter — synchronised via atomics.
     unsafe impl Send for SharedMemoryReader {}
+    unsafe impl Sync for SharedMemoryReader {}
 
     impl SharedMemoryReader {
         /// Open an existing named shared memory region.
+        ///
+        /// Used in tests with `Local\` kernel object names.
         pub fn open(name: &str) -> Result<Self, Error> {
             let wide_name = to_wide(name);
             let event_name_str = format!("{name}_event");
@@ -97,7 +104,110 @@ mod platform {
 
             Ok(Self {
                 mapping_handle,
-                event_handle,
+                file_handle: None,
+                event_handle: Some(event_handle),
+                base_ptr,
+                _total_size: total_size,
+            })
+        }
+
+        /// Open an existing file-backed shared memory region for reading.
+        ///
+        /// Used in production by the COM DLL to read frames written by the app.
+        pub fn open_file(file_path: &std::path::Path) -> Result<Self, Error> {
+            use windows::Win32::Storage::FileSystem::{
+                CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
+                OPEN_EXISTING,
+            };
+            use windows::Win32::System::Memory::PAGE_READONLY;
+
+            let wide_path = path_to_wide(file_path);
+
+            // Open the file for reading, allowing the writer to keep it open.
+            let file_handle = unsafe {
+                CreateFileW(
+                    PCWSTR(wide_path.as_ptr()),
+                    GENERIC_READ.0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )?
+            };
+
+            // Create a read-only file mapping.
+            let mapping_handle = match unsafe {
+                windows::Win32::System::Memory::CreateFileMappingW(
+                    file_handle,
+                    None,
+                    PAGE_READONLY,
+                    0,
+                    0,
+                    PCWSTR::null(),
+                )
+            } {
+                Ok(h) => h,
+                Err(e) => {
+                    unsafe {
+                        let _ = CloseHandle(file_handle);
+                    }
+                    return Err(e.into());
+                }
+            };
+
+            // Map the entire file as read-only.
+            let base_ptr =
+                unsafe { MapViewOfFile(mapping_handle, FILE_MAP_READ, 0, 0, 0).Value as *const u8 };
+
+            if base_ptr.is_null() {
+                let err = windows::core::Error::from_thread();
+                unsafe {
+                    let _ = CloseHandle(mapping_handle);
+                    let _ = CloseHandle(file_handle);
+                }
+                return Err(err.into());
+            }
+
+            // Validate the header.
+            let header = unsafe { &*(base_ptr as *const SharedFrameHeader) };
+
+            if header.magic != MAGIC {
+                let magic = header.magic;
+                unsafe {
+                    let view = windows::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS {
+                        Value: base_ptr as *mut _,
+                    };
+                    let _ = UnmapViewOfFile(view);
+                    let _ = CloseHandle(mapping_handle);
+                    let _ = CloseHandle(file_handle);
+                }
+                return Err(Error::InvalidMagic(magic));
+            }
+
+            if header.version != VERSION {
+                let version = header.version;
+                unsafe {
+                    let view = windows::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS {
+                        Value: base_ptr as *mut _,
+                    };
+                    let _ = UnmapViewOfFile(view);
+                    let _ = CloseHandle(mapping_handle);
+                    let _ = CloseHandle(file_handle);
+                }
+                return Err(Error::VersionMismatch {
+                    expected: VERSION,
+                    actual: version,
+                });
+            }
+
+            let total_size =
+                SharedFrameHeader::total_size(header.width, header.height, header.slot_count);
+
+            Ok(Self {
+                mapping_handle,
+                file_handle: Some(file_handle),
+                event_handle: None,
                 base_ptr,
                 _total_size: total_size,
             })
@@ -135,9 +245,14 @@ mod platform {
         /// Wait for a new frame signal with timeout.
         ///
         /// Returns `true` if a frame signal was received, `false` on timeout.
+        /// Only works with named event mappings (i.e. `open()`), not file-backed.
         pub fn wait_frame(&self, timeout_ms: u32) -> bool {
+            let event_handle = match self.event_handle {
+                Some(h) => h,
+                None => return false,
+            };
             // SAFETY: event_handle is valid.
-            let result = unsafe { WaitForSingleObject(self.event_handle, timeout_ms) };
+            let result = unsafe { WaitForSingleObject(event_handle, timeout_ms) };
             result == WAIT_OBJECT_0
         }
     }
@@ -151,7 +266,12 @@ mod platform {
                 };
                 let _ = UnmapViewOfFile(view);
                 let _ = CloseHandle(self.mapping_handle);
-                let _ = CloseHandle(self.event_handle);
+                if let Some(fh) = self.file_handle {
+                    let _ = CloseHandle(fh);
+                }
+                if let Some(eh) = self.event_handle {
+                    let _ = CloseHandle(eh);
+                }
             }
         }
     }
@@ -159,6 +279,15 @@ mod platform {
     /// Encode a Rust `&str` as a null-terminated UTF-16 wide string.
     fn to_wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Convert a `Path` to a null-terminated UTF-16 wide string.
+    fn path_to_wide(path: &std::path::Path) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 }
 

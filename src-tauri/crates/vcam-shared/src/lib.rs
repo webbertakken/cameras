@@ -4,8 +4,6 @@ pub mod ring_buffer;
 #[cfg(windows)]
 pub mod owner;
 #[cfg(windows)]
-pub mod producer;
-#[cfg(windows)]
 pub mod reader;
 #[cfg(windows)]
 pub mod writer;
@@ -15,8 +13,6 @@ pub use ring_buffer::{PixelFormat, SharedFrameHeader, HEADER_SIZE, MAGIC, VERSIO
 
 #[cfg(windows)]
 pub use owner::SharedMemoryOwner;
-#[cfg(windows)]
-pub use producer::SharedMemoryProducer;
 #[cfg(windows)]
 pub use reader::SharedMemoryReader;
 #[cfg(windows)]
@@ -30,7 +26,13 @@ pub use writer::SharedMemoryWriter;
 /// and the COM DLL (which uses it in `DllGetClassObject`).
 pub const VCAM_SOURCE_CLSID: u128 = 0x7B2E_3A1F_4D5C_4E8B_9A6F_1C2D_3E4F_5A6B;
 
-/// Well-known shared memory name used by both the main app and the COM DLL.
+/// Well-known file path for shared memory IPC between app and COM DLL.
+///
+/// Both the app and COM DLL use this path to find each other. File paths
+/// are universal — they work across all sessions and kernel object namespaces.
+pub const SHARED_MEMORY_FILE_PATH: &str = r"C:\ProgramData\CamerasApp\vcam_shm_0.bin";
+
+/// Well-known shared memory name — kept for tests using `Local\` kernel objects.
 pub const SHARED_MEMORY_NAME: &str = r"Global\CamerasApp_VCam_0";
 
 /// Default frame width when no shared memory is connected.
@@ -163,54 +165,72 @@ mod tests {
     }
 
     #[test]
-    fn producer_writes_to_writer_created_mapping() {
-        let name = test_name("producer");
-        let width = 4;
-        let height = 2;
-        let frame_size = SharedFrameHeader::nv12_frame_size(width, height) as usize;
+    fn file_backed_owner_reader_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_shm.bin");
 
-        // SharedMemoryWriter acts as owner (creates the mapping).
-        let _owner = SharedMemoryWriter::new(&name, width, height, 3).unwrap();
-
-        // SharedMemoryProducer opens the existing mapping for writing.
-        let producer = SharedMemoryProducer::open(&name).unwrap();
-
-        let reader = SharedMemoryReader::open(&name).unwrap();
+        let owner = SharedMemoryOwner::new(&path, 4, 2, 3).unwrap();
+        let reader = SharedMemoryReader::open_file(&path).unwrap();
 
         // Initially no frame.
         assert!(reader.read_frame().is_none());
 
-        // Write via producer.
+        // Write via owner.
+        let frame_size = SharedFrameHeader::nv12_frame_size(4, 2) as usize;
         let frame: Vec<u8> = (0..frame_size).map(|i| (i % 256) as u8).collect();
-        producer.write_frame(&frame);
+        owner.write_frame(&frame);
 
         // Read back.
         let read = reader.read_frame().expect("frame should be available");
         assert_eq!(read, &frame[..]);
+
+        // Verify sequence.
+        assert_eq!(owner.sequence(), 1);
+        assert_eq!(reader.header().sequence.load(Ordering::Acquire), 1);
+
+        drop(reader);
+        drop(owner);
     }
 
     #[test]
-    fn owner_creates_and_reads_frames() {
-        let name = test_name("owner");
-        let width = 4;
-        let height = 2;
-        let frame_size = SharedFrameHeader::nv12_frame_size(width, height) as usize;
+    fn file_backed_owner_writes_and_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_owner.bin");
 
-        // SharedMemoryOwner creates the mapping with DACL.
-        let owner = SharedMemoryOwner::new(&name, width, height, 3).unwrap();
+        let owner = SharedMemoryOwner::new(&path, 4, 2, 3).unwrap();
 
         // Initially no frame.
         assert!(owner.read_frame().is_none());
 
-        // Use a producer to write a frame.
-        let producer = SharedMemoryProducer::open(&name).unwrap();
-
+        let frame_size = SharedFrameHeader::nv12_frame_size(4, 2) as usize;
         let frame: Vec<u8> = (0..frame_size).map(|i| (i % 256) as u8).collect();
-        producer.write_frame(&frame);
+        owner.write_frame(&frame);
 
-        // Owner can read it back.
+        // Owner can read back its own frame.
         let read = owner.read_frame().expect("frame should be available");
         assert_eq!(read, &frame[..]);
+
+        drop(owner);
+    }
+
+    #[test]
+    fn file_backed_open_nonexistent_path_returns_error() {
+        let result =
+            SharedMemoryReader::open_file(std::path::Path::new(r"C:\nonexistent\path\shm.bin"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_backed_owner_deletes_file_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_cleanup.bin");
+
+        {
+            let _owner = SharedMemoryOwner::new(&path, 4, 2, 3).unwrap();
+            assert!(path.exists(), "file should exist while owner is alive");
+        }
+
+        assert!(!path.exists(), "file should be deleted after owner drops");
     }
 
     #[test]

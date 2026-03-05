@@ -28,7 +28,8 @@ pub use com_exports::{DllCanUnloadNow, DllGetClassObject};
 // Re-export shared constants from vcam-shared so both the main app and this
 // DLL use the same values.
 pub use vcam_shared::{
-    DEFAULT_HEIGHT, DEFAULT_WIDTH, SHARED_MEMORY_NAME, TARGET_FPS, VCAM_SOURCE_CLSID,
+    DEFAULT_HEIGHT, DEFAULT_WIDTH, SHARED_MEMORY_FILE_PATH, SHARED_MEMORY_NAME, TARGET_FPS,
+    VCAM_SOURCE_CLSID,
 };
 
 #[cfg(windows)]

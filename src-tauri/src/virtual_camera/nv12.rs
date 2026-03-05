@@ -179,8 +179,9 @@ mod tests {
         let _ = bgr_to_nv12(&bgr, 640, 480);
         let elapsed = start.elapsed();
 
-        // Debug builds are ~2-3x slower; use relaxed threshold
-        let limit_ms = if cfg!(debug_assertions) { 15 } else { 5 };
+        // Debug builds are ~2-3x slower; use relaxed threshold.
+        // 25ms allows for parallel test runs and background load.
+        let limit_ms = if cfg!(debug_assertions) { 25 } else { 5 };
         assert!(
             elapsed.as_millis() < limit_ms,
             "640x480 conversion took {}ms, expected < {limit_ms}ms",

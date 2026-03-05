@@ -5,10 +5,11 @@
 //! media source lifecycle: GetCharacteristics → CreatePresentationDescriptor →
 //! Start → (frame delivery) → Stop → Shutdown.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vcam_shared::SharedMemoryOwner;
+use vcam_shared::SharedMemoryReader;
 
 use windows::Win32::Foundation::{E_UNEXPECTED, S_OK};
 use windows::Win32::Media::KernelStreaming::{
@@ -38,7 +39,7 @@ use windows_core::{implement, IUnknown, IUnknownImpl, Interface, Ref, BOOL, GUID
 use crate::media_stream::VCamMediaStream;
 use crate::{
     decrement_object_count, increment_object_count, DEFAULT_HEIGHT, DEFAULT_WIDTH,
-    SHARED_MEMORY_NAME, TARGET_FPS,
+    SHARED_MEMORY_FILE_PATH, TARGET_FPS,
 };
 
 /// The MF_MT_SUBTYPE GUID for NV12.
@@ -114,11 +115,6 @@ pub(crate) struct VCamMediaSource {
     state: Mutex<SourceState>,
     stream: Mutex<Option<IMFMediaStream2>>,
     shutdown: AtomicBool,
-    shared_mem_name: Mutex<String>,
-    /// Owns the `Global\` shared memory mapping. Created during `Start()`,
-    /// dropped during `Stop()`/`Shutdown()`. The COM DLL (FrameServer) creates
-    /// this mapping; the app opens it via `SharedMemoryProducer`.
-    shm_owner: Mutex<Option<Arc<SharedMemoryOwner>>>,
 }
 
 impl VCamMediaSource {
@@ -148,8 +144,6 @@ impl VCamMediaSource {
             state: Mutex::new(SourceState::Stopped),
             stream: Mutex::new(None),
             shutdown: AtomicBool::new(false),
-            shared_mem_name: Mutex::new(SHARED_MEMORY_NAME.to_owned()),
-            shm_owner: Mutex::new(None),
         })
     }
 
@@ -170,13 +164,10 @@ impl VCamMediaSource {
             *state = SourceState::Shutdown;
         }
 
-        // Drop the stream.
+        // Drop the stream (and its SharedMemoryReader handle).
         if let Some(stream) = self.stream.lock().unwrap().take() {
             drop(stream);
         }
-
-        // Drop the shared memory owner.
-        self.shm_owner.lock().unwrap().take();
 
         // Shut down the event queue.
         unsafe { self.event_queue.Shutdown()? };
@@ -274,25 +265,24 @@ impl IMFMediaSource_Impl for VCamMediaSource_Impl {
         }
         let stream_desc = stream_desc.ok_or(windows_core::Error::from(E_UNEXPECTED))?;
 
-        let shared_mem_name = self.shared_mem_name.lock().unwrap().clone();
-
-        // Create the shared memory owner — this creates the Global\ mapping
-        // with a DACL granting interactive users write access.
-        let owner = SharedMemoryOwner::new(&shared_mem_name, DEFAULT_WIDTH, DEFAULT_HEIGHT, 3)
+        // Open the file-backed shared memory created by the app. If the file
+        // doesn't exist yet, deliver black frames until it appears.
+        let reader = SharedMemoryReader::open_file(Path::new(SHARED_MEMORY_FILE_PATH))
             .map_err(|e| {
-                crate::trace::trace(&format!("Failed to create shared memory: {e}"));
-                windows_core::Error::from(E_UNEXPECTED)
-            })?;
-        let owner = Arc::new(owner);
-        *self.shm_owner.lock().unwrap() = Some(Arc::clone(&owner));
+                crate::trace::trace(&format!("SHM file not ready: {e}"));
+                // Not fatal — deliver black frames until file appears.
+            })
+            .ok()
+            .map(Arc::new);
 
-        crate::trace::trace(&format!(
-            "Created shared memory '{}' ({}x{})",
-            shared_mem_name, DEFAULT_WIDTH, DEFAULT_HEIGHT
-        ));
+        if reader.is_some() {
+            crate::trace::trace(&format!(
+                "Opened shared memory file '{SHARED_MEMORY_FILE_PATH}'"
+            ));
+        }
 
         // Create and store the media stream. FrameServer requires IMFMediaStream2.
-        let stream = VCamMediaStream::new(&stream_desc, Some(owner))?;
+        let stream = VCamMediaStream::new(&stream_desc, reader)?;
         let stream_iface: IMFMediaStream2 = stream.into();
 
         // Transition to running state per MSDN FrameServer sample.
@@ -342,9 +332,6 @@ impl IMFMediaSource_Impl for VCamMediaSource_Impl {
         if let Some(stream) = self.stream.lock().unwrap().take() {
             drop(stream);
         }
-
-        // Drop the shared memory owner.
-        self.shm_owner.lock().unwrap().take();
 
         // Queue MESourceStopped.
         unsafe {

@@ -31,6 +31,10 @@ pub struct MfVirtualCamera {
     vcam: Option<IMFVirtualCamera>,
     pump_handle: Option<JoinHandle<()>>,
     pump_running: Arc<AtomicBool>,
+    /// File-backed shared memory owner. Must outlive both the pump thread and
+    /// the virtual camera — the DLL reads from the file until `Shutdown()`.
+    /// Dropped last in `stop()` so `DeleteFileW` runs after all handles close.
+    shm_owner: Option<Arc<vcam_shared::SharedMemoryOwner>>,
 }
 
 // SAFETY: IMFVirtualCamera is apartment-agile (supports both STA and MTA).
@@ -46,6 +50,7 @@ impl MfVirtualCamera {
             vcam: None,
             pump_handle: None,
             pump_running: Arc::new(AtomicBool::new(false)),
+            shm_owner: None,
         }
     }
 
@@ -110,13 +115,40 @@ impl MfVirtualCamera {
 
     /// Spawn the background frame pump thread.
     ///
-    /// The COM DLL (loaded by FrameServer) creates the `Global\` shared memory
-    /// mapping. The pump thread opens it via `SharedMemoryProducer` with a
-    /// retry loop.
+    /// Creates the file-backed shared memory BEFORE starting the pump, so
+    /// the file is ready by the time FrameServer loads the COM DLL.
     fn start_pump(&mut self) -> Result<(), String> {
-        let shm_name = vcam_shared::SHARED_MEMORY_NAME.to_string();
+        let file_path = std::path::Path::new(vcam_shared::SHARED_MEMORY_FILE_PATH);
 
-        info!("Starting frame pump — shared memory will be opened by producer ('{shm_name}')...");
+        // Create the parent directory if it doesn't exist.
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                error!("Failed to create directory {}: {e}", parent.display());
+                format!("mkdir: {e}")
+            })?;
+        }
+
+        let shm_owner = Arc::new(
+            vcam_shared::SharedMemoryOwner::new(
+                file_path,
+                vcam_shared::DEFAULT_WIDTH,
+                vcam_shared::DEFAULT_HEIGHT,
+                3,
+            )
+            .map_err(|e| {
+                error!("Failed to create shared memory file: {e}");
+                format!("shared memory: {e}")
+            })?,
+        );
+
+        // Store the owner so it outlives the pump thread AND the virtual
+        // camera shutdown. The DLL reads from the file until Shutdown().
+        self.shm_owner = Some(Arc::clone(&shm_owner));
+
+        info!(
+            "Created shared memory file '{}'",
+            vcam_shared::SHARED_MEMORY_FILE_PATH
+        );
 
         self.pump_running.store(true, Ordering::Relaxed);
 
@@ -127,7 +159,7 @@ impl MfVirtualCamera {
         let handle = std::thread::Builder::new()
             .name("vcam-pump".to_string())
             .spawn(move || {
-                super::frame_pump::run_frame_pump(jpeg_buffer, shm_name, running);
+                super::frame_pump::run_frame_pump(jpeg_buffer, shm_owner, running);
             })
             .map_err(|e| {
                 error!("Failed to spawn frame pump thread: {e}");
@@ -154,8 +186,11 @@ impl VirtualCameraSink for MfVirtualCamera {
             "Starting virtual camera pipeline for '{}'...",
             self.device_name
         );
-        self.create_virtual_camera()?;
+        // Create the shared memory file and start the pump BEFORE creating the
+        // virtual camera. FrameServer loads the COM DLL during
+        // MFCreateVirtualCamera / Start(), so the file must already exist.
         self.start_pump()?;
+        self.create_virtual_camera()?;
 
         info!("Virtual camera fully started for '{}'", self.device_name);
         Ok(())
@@ -188,6 +223,14 @@ impl VirtualCameraSink for MfVirtualCamera {
                 "No active MF virtual camera to stop for '{}'",
                 self.device_name
             );
+        }
+
+        // Drop the shared memory owner LAST — the DLL may still have read
+        // handles open until Shutdown() completes. Drop triggers unmap +
+        // close file handle + DeleteFileW.
+        if let Some(owner) = self.shm_owner.take() {
+            drop(owner);
+            info!("Shared memory file cleaned up");
         }
 
         Ok(())
