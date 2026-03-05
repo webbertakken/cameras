@@ -1,5 +1,7 @@
 pub mod commands;
+#[cfg(target_os = "windows")]
 pub mod frame_pump;
+#[cfg(target_os = "windows")]
 pub mod nv12;
 
 #[cfg(target_os = "linux")]
