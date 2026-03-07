@@ -13,6 +13,10 @@
   gap: var(--space-4);
 }
 
+.app-main__preview-container {
+  position: relative;
+}
+
 .app-main__placeholder {
   display: flex;
   align-items: center;

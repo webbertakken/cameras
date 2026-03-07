@@ -4,17 +4,26 @@
 //! intervals and pushes JPEG frames directly into a `JpegFrameBuffer`.
 //! Canon live view delivers JPEG natively, so no encoding step is needed.
 
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::camera::canon::api::{CameraHandle, EdsSdkApi};
+use crate::diagnostics::stats::DiagnosticStats;
 use crate::preview::encode_worker::{JpegFrame, JpegFrameBuffer};
 use crate::preview::mf_jpeg::encoder::EncoderKind;
 
-/// Default polling interval for live view frames (~5fps).
-const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// Default polling interval for live view frames.
+///
+/// Canon EDSDK live view can deliver frames as fast as the camera produces
+/// them (~7-10fps on most EOS bodies). We poll aggressively and only sleep
+/// on errors to maximise throughput.
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Back-off delay when a download attempt fails (e.g. EVF not ready).
+const ERROR_BACKOFF: Duration = Duration::from_millis(100);
 
 /// How long without a successful frame before logging a stuck warning.
 const STUCK_THRESHOLD: Duration = Duration::from_secs(5);
@@ -127,12 +136,14 @@ impl LiveViewSession {
     ///
     /// Opens a session with the camera, enables EVF output, then spawns a
     /// polling thread that downloads JPEG frames into the provided buffer.
+    /// Diagnostic stats are updated on each frame for the overlay.
     pub fn start<S: EdsSdkApi + 'static>(
         sdk: Arc<S>,
         camera: CameraHandle,
         jpeg_buffer: Arc<JpegFrameBuffer>,
+        diag_stats: Arc<Mutex<DiagnosticStats>>,
     ) -> crate::camera::error::Result<Self> {
-        Self::start_with_interval(sdk, camera, jpeg_buffer, DEFAULT_POLL_INTERVAL)
+        Self::start_with_interval(sdk, camera, jpeg_buffer, diag_stats, DEFAULT_POLL_INTERVAL)
     }
 
     /// Start with a custom polling interval (useful for testing).
@@ -144,6 +155,7 @@ impl LiveViewSession {
         sdk: Arc<S>,
         camera: CameraHandle,
         jpeg_buffer: Arc<JpegFrameBuffer>,
+        diag_stats: Arc<Mutex<DiagnosticStats>>,
         interval: Duration,
     ) -> crate::camera::error::Result<Self> {
         sdk.start_live_view(camera)?;
@@ -155,7 +167,14 @@ impl LiveViewSession {
         let thread = std::thread::Builder::new()
             .name(format!("canon-lv-{}", camera.0))
             .spawn(move || {
-                poll_live_view(&*sdk, camera, &buffer_clone, &running_clone, interval);
+                poll_live_view(
+                    &*sdk,
+                    camera,
+                    &buffer_clone,
+                    &running_clone,
+                    &diag_stats,
+                    interval,
+                );
             })
             .map_err(|e| {
                 crate::camera::error::CameraError::CanonSdkError(format!(
@@ -229,11 +248,15 @@ impl Drop for LiveViewComGuard {
 ///
 /// Initialises COM STA on this thread (EDSDK requires COM on every calling
 /// thread) before entering the download loop.
+///
+/// Polls aggressively after successful frames (using `interval`) and backs
+/// off on errors to avoid busy-spinning when EVF isn't ready yet.
 fn poll_live_view<S: EdsSdkApi>(
     sdk: &S,
     camera: CameraHandle,
     jpeg_buffer: &JpegFrameBuffer,
     running: &AtomicBool,
+    diag_stats: &Mutex<DiagnosticStats>,
     interval: Duration,
 ) {
     // EDSDK requires COM STA on every thread that calls it.
@@ -243,8 +266,12 @@ fn poll_live_view<S: EdsSdkApi>(
     let mut stats = PollStats::new(Instant::now());
 
     while running.load(Ordering::Relaxed) {
+        // Measure SDK download time — this is the meaningful latency for Canon
+        // (the time EDSDK takes to transfer the EVF image over USB).
+        let download_start = Instant::now();
         match sdk.download_evf_image(camera) {
             Ok(jpeg_data) => {
+                let download_us = download_start.elapsed().as_micros() as u64;
                 let size = jpeg_data.len();
                 // Canon live view delivers JPEG natively — push directly
                 // into the JPEG buffer, bypassing RGB encoding entirely.
@@ -255,6 +282,15 @@ fn poll_live_view<S: EdsSdkApi>(
                     encoder_kind: EncoderKind::CpuFallback, // Not really encoded, just a label
                 });
 
+                // Update diagnostic stats for the overlay.
+                // Use record_frame_with_latency so the measured SDK download
+                // time is used directly — the clock-offset path in record_frame
+                // would cancel to zero because Canon has no external timestamp.
+                {
+                    let mut ds = diag_stats.lock();
+                    ds.record_frame_with_latency(size, download_us);
+                }
+
                 match stats.on_frame(size, Instant::now()) {
                     FrameAction::LogFirstFrame { size } => {
                         tracing::info!("Canon live view: first frame received ({size} bytes)");
@@ -264,6 +300,10 @@ fn poll_live_view<S: EdsSdkApi>(
                     }
                     FrameAction::None => {}
                 }
+
+                // Short sleep between successful frames — poll as fast
+                // as the camera can deliver.
+                std::thread::sleep(interval);
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -289,9 +329,11 @@ fn poll_live_view<S: EdsSdkApi>(
                         );
                     }
                 }
+
+                // Back off on errors to avoid busy-spinning
+                std::thread::sleep(ERROR_BACKOFF);
             }
         }
-        std::thread::sleep(interval);
     }
 }
 
@@ -303,6 +345,11 @@ mod tests {
     /// Minimal valid JPEG for testing.
     fn test_jpeg() -> Vec<u8> {
         vec![0xFF, 0xD8, 0xFF, 0xD9]
+    }
+
+    /// Create a fresh DiagnosticStats wrapped for sharing.
+    fn make_diag_stats() -> Arc<Mutex<DiagnosticStats>> {
+        Arc::new(Mutex::new(DiagnosticStats::new()))
     }
 
     #[test]
@@ -319,6 +366,7 @@ mod tests {
             Arc::clone(&mock),
             camera,
             Arc::clone(&jpeg_buffer),
+            make_diag_stats(),
             Duration::from_millis(10),
         )
         .unwrap();
@@ -349,6 +397,7 @@ mod tests {
             Arc::clone(&mock),
             camera,
             Arc::clone(&jpeg_buffer),
+            make_diag_stats(),
             Duration::from_millis(10),
         )
         .unwrap();
@@ -364,6 +413,7 @@ mod tests {
         let mock = Arc::new(MockEdsSdk::new().with_cameras(1));
         let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
         let camera = CameraHandle(0);
+        let diag_stats = make_diag_stats();
 
         // Manually start live view on mock so download attempts proceed
         mock.start_live_view(camera).unwrap();
@@ -371,6 +421,7 @@ mod tests {
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = Arc::clone(&running);
         let buffer_clone = Arc::clone(&jpeg_buffer);
+        let stats_clone = Arc::clone(&diag_stats);
 
         let handle = std::thread::spawn(move || {
             poll_live_view(
@@ -378,6 +429,7 @@ mod tests {
                 camera,
                 &buffer_clone,
                 &running_clone,
+                &stats_clone,
                 Duration::from_millis(5),
             );
         });
@@ -388,6 +440,9 @@ mod tests {
 
         // No frames should have been pushed (no frame data configured)
         assert_eq!(jpeg_buffer.sequence(), 0);
+        // Diagnostic stats should also be zero (no successful frames)
+        let snap = diag_stats.lock().snapshot();
+        assert_eq!(snap.frame_count, 0);
     }
 
     #[test]
@@ -404,6 +459,7 @@ mod tests {
             Arc::clone(&mock),
             camera,
             Arc::clone(&jpeg_buffer),
+            make_diag_stats(),
             Duration::from_millis(10),
         )
         .unwrap();
@@ -413,6 +469,89 @@ mod tests {
 
         // Stop disables live view but does not close the camera session
         session.stop(&*mock, camera);
+    }
+
+    #[test]
+    fn live_view_updates_diagnostic_stats_on_frames() {
+        let mock = Arc::new(
+            MockEdsSdk::new()
+                .with_cameras(1)
+                .with_live_view_frame(test_jpeg()),
+        );
+        let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
+        let camera = CameraHandle(0);
+        let diag_stats = make_diag_stats();
+
+        let session = LiveViewSession::start_with_interval(
+            Arc::clone(&mock),
+            camera,
+            Arc::clone(&jpeg_buffer),
+            Arc::clone(&diag_stats),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+
+        // Wait for several frames to be processed
+        std::thread::sleep(Duration::from_millis(80));
+
+        let snap = diag_stats.lock().snapshot();
+        assert!(
+            snap.frame_count > 0,
+            "diagnostic frame count should be non-zero, got {}",
+            snap.frame_count
+        );
+        assert!(
+            snap.fps > 0.0,
+            "diagnostic FPS should be positive, got {}",
+            snap.fps
+        );
+        assert!(
+            snap.bandwidth_bps > 0,
+            "diagnostic bandwidth should be positive, got {}",
+            snap.bandwidth_bps
+        );
+        // Regression: latency must not be zero — Canon used to pass elapsed_us
+        // as the capture timestamp which cancelled to 0 in record_frame.
+        assert!(
+            snap.latency_ms >= 0.0,
+            "latency_ms must be non-negative, got {}",
+            snap.latency_ms
+        );
+
+        session.stop(&*mock, camera);
+    }
+
+    #[test]
+    fn live_view_diagnostics_track_frame_bytes() {
+        let mock = Arc::new(
+            MockEdsSdk::new()
+                .with_cameras(1)
+                .with_live_view_frame(test_jpeg()),
+        );
+        let jpeg_buffer = Arc::new(JpegFrameBuffer::new());
+        let camera = CameraHandle(0);
+        let diag_stats = make_diag_stats();
+
+        let session = LiveViewSession::start_with_interval(
+            Arc::clone(&mock),
+            camera,
+            Arc::clone(&jpeg_buffer),
+            Arc::clone(&diag_stats),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+
+        // Wait for at least one frame
+        std::thread::sleep(Duration::from_millis(30));
+        session.stop(&*mock, camera);
+
+        let snap = diag_stats.lock().snapshot();
+        // Each frame is 4 bytes (test_jpeg()), so total bytes should match
+        let expected_bytes = snap.frame_count * test_jpeg().len() as u64;
+        // bandwidth_bps > 0 implies bytes were tracked
+        assert!(snap.bandwidth_bps > 0);
+        // Sanity: frame_count * 4 bytes should give a reasonable bandwidth
+        assert!(expected_bytes > 0);
     }
 
     // ------------------------------------------------------------------

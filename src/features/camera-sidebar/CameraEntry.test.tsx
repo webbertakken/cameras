@@ -94,4 +94,64 @@ describe('CameraEntry', () => {
     )
     expect(screen.getByTestId('camera-thumbnail').querySelector('svg')).not.toBeInTheDocument()
   })
+
+  it('renders virtual camera toggle when onToggleVirtualCamera is provided', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        hasPreview={true}
+        onToggleVirtualCamera={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Expose as virtual camera' })).toBeInTheDocument()
+  })
+
+  it('virtual camera button is disabled without active preview', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        hasPreview={false}
+        onToggleVirtualCamera={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Expose as virtual camera' })).toBeDisabled()
+  })
+
+  it('virtual camera button shows active state', () => {
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        hasPreview={true}
+        isVirtualCameraActive={true}
+        onToggleVirtualCamera={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Stop virtual camera' })).toBeInTheDocument()
+  })
+
+  it('virtual camera toggle calls onToggleVirtualCamera with device id', () => {
+    const onToggle = vi.fn()
+    render(
+      <CameraEntry
+        device={device}
+        isSelected={false}
+        onSelect={vi.fn()}
+        hasPreview={true}
+        onToggleVirtualCamera={onToggle}
+      />,
+    )
+    screen.getByRole('button', { name: 'Expose as virtual camera' }).click()
+    expect(onToggle).toHaveBeenCalledWith('cam-1')
+  })
+
+  it('does not render virtual camera button when onToggleVirtualCamera is omitted', () => {
+    render(<CameraEntry device={device} isSelected={false} onSelect={vi.fn()} />)
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
 })

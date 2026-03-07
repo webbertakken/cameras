@@ -10,6 +10,12 @@ Desktop app for managing camera settings — brightness, contrast, white balance
 - Camera discovery with hot-plug detection
 - System tray with global shortcuts
 
+## Platform support
+
+- **Windows:** Windows 11+ (Build 22000+)
+- **Linux:** Supported
+- **macOS:** Supported
+
 ## Tech stack
 
 - **Frontend:** React 19, TypeScript, Vite, Zustand

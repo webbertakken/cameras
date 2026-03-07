@@ -10,6 +10,7 @@ mod preset;
 mod preview;
 mod settings;
 mod tray;
+mod virtual_camera;
 
 use std::sync::Arc;
 
@@ -21,13 +22,17 @@ use camera::commands::{
 };
 use camera::hotplug_bridge::start_hotplug_watcher;
 use preview::commands::{
-    get_active_gpu, get_diagnostics, get_encoding_stats, get_frame, get_thumbnail,
-    list_gpu_adapters, set_gpu_adapter, start_all_previews, start_preview, stop_preview,
-    PreviewState,
+    get_active_gpu, get_active_previews, get_diagnostics, get_encoding_stats, get_frame,
+    get_thumbnail, list_gpu_adapters, set_gpu_adapter, start_all_previews, start_preview,
+    stop_preview, PreviewState,
 };
 use preview::gpu::GpuState;
 use settings::commands::{get_saved_settings, reset_to_defaults, SettingsState};
 use settings::store::SettingsStore;
+use virtual_camera::commands::{
+    get_virtual_camera_status, start_virtual_camera, stop_virtual_camera,
+};
+use virtual_camera::VirtualCameraState;
 
 /// Holds an optional Canon SDK reference for creating live view sessions.
 ///
@@ -204,6 +209,7 @@ pub fn run() {
         .manage(canon_sdk_state)
         .manage(PreviewState::new())
         .manage(GpuState::new())
+        .manage(VirtualCameraState::new())
         .invoke_handler(tauri::generate_handler![
             list_cameras,
             get_camera_controls,
@@ -222,6 +228,10 @@ pub fn run() {
             list_gpu_adapters,
             get_active_gpu,
             set_gpu_adapter,
+            get_active_previews,
+            start_virtual_camera,
+            stop_virtual_camera,
+            get_virtual_camera_status,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

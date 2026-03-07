@@ -11,14 +11,27 @@ export interface DiagnosticSnapshot {
   usbBusInfo: string | null
 }
 
-/** Polls diagnostic stats at 1fps (1000ms interval). */
+export interface EncodingSnapshot {
+  encoderKind: string
+  framesEncoded: number
+  framesDropped: number
+  avgEncodeMs: number
+  lastEncodeMs: number
+}
+
+export interface CombinedDiagnostics {
+  diagnostics: DiagnosticSnapshot
+  encoding: EncodingSnapshot | null
+}
+
+/** Polls diagnostic and encoding stats at 1fps (1000ms interval). */
 export function useDiagnostics(
   deviceId: string | null,
   enabled: boolean,
-): DiagnosticSnapshot | null {
+): CombinedDiagnostics | null {
   const [state, setState] = useState<{
     key: string
-    snapshot: DiagnosticSnapshot | null
+    snapshot: CombinedDiagnostics | null
   }>({ key: `${deviceId}:${enabled}`, snapshot: null })
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -32,14 +45,17 @@ export function useDiagnostics(
     if (!deviceId || !enabled) return
 
     intervalRef.current = setInterval(async () => {
-      try {
-        const data = await invoke<DiagnosticSnapshot>('get_diagnostics', {
-          deviceId,
-        })
-        setState((prev) => ({ ...prev, snapshot: data }))
-      } catch {
-        // Diagnostics not available — skip
-      }
+      const [diagResult, encResult] = await Promise.allSettled([
+        invoke<DiagnosticSnapshot>('get_diagnostics', { deviceId }),
+        invoke<EncodingSnapshot>('get_encoding_stats', { deviceId }),
+      ])
+
+      if (diagResult.status === 'rejected') return
+
+      const diagnostics = diagResult.value
+      const encoding = encResult.status === 'fulfilled' ? encResult.value : null
+
+      setState((prev) => ({ ...prev, snapshot: { diagnostics, encoding } }))
     }, 1000)
 
     return () => {

@@ -77,7 +77,15 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils nasm
+
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nasm -y
+
+      - name: Install NASM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -130,6 +138,25 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      - name: Build vcam-source DLL (Windows)
+        if: matrix.target == 'windows-x64'
+        shell: bash
+        working-directory: src-tauri
+        run: cargo build -p vcam-source --release
+
+      - name: Build MSIX sparse package (Windows)
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: scripts/build-msix.ps1
+
+      - name: Upload MSIX to release (Windows)
+        if: ${{ matrix.target == 'windows-x64' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/msix/*.msix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
@@ -141,4 +168,5 @@ jobs:
             src-tauri/target/**/release/bundle/dmg/*.dmg
             src-tauri/target/**/release/bundle/appimage/*.AppImage
             src-tauri/target/**/release/bundle/deb/*.deb
+            src-tauri/msix/*.msix
           if-no-files-found: error

@@ -59,3 +59,38 @@
   white-space: nowrap;
   max-width: 100%;
 }
+
+.camera-entry__vcam-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--colour-text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.camera-entry__vcam-toggle:hover:not(:disabled) {
+  background-color: var(--colour-bg-secondary);
+  color: var(--colour-text-primary);
+}
+
+.camera-entry__vcam-toggle--active {
+  color: var(--colour-accent);
+}
+
+.camera-entry__vcam-toggle--active:hover:not(:disabled) {
+  color: var(--colour-accent);
+}
+
+.camera-entry__vcam-toggle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CameraDevice } from './types/camera'
 import { useCameraStore } from './features/camera-sidebar/store'
@@ -113,5 +113,27 @@ describe('App', () => {
 
     // start_preview should never be called — sessions are started by the backend
     expect(mockInvoke).not.toHaveBeenCalledWith('start_preview', expect.anything())
+  })
+
+  it('toggles diagnostic overlay with Ctrl+D', () => {
+    useCameraStore.setState({ cameras: [cam1], selectedId: 'cam-1' })
+    render(<App />)
+
+    // Overlay toggle button should exist but overlay hidden by default
+    const toggleButton = screen.getByRole('button', { name: 'Stats' })
+    expect(toggleButton).toHaveAttribute('aria-pressed', 'false')
+
+    // Press Ctrl+D to toggle on
+    fireEvent.keyDown(document, { key: 'd', ctrlKey: true })
+    expect(toggleButton).toHaveAttribute('aria-pressed', 'true')
+
+    // Press Ctrl+D again to toggle off
+    fireEvent.keyDown(document, { key: 'd', ctrlKey: true })
+    expect(toggleButton).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('does not show diagnostic overlay when no camera selected', () => {
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Stats' })).not.toBeInTheDocument()
   })
 })
