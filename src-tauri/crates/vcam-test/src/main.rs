@@ -15,7 +15,9 @@ use std::env;
 use std::path::PathBuf;
 
 use windows::core::{Interface, GUID, HSTRING};
-use windows::Win32::Media::KernelStreaming::{IKsControl, IKsPropertySet, KSCATEGORY_VIDEO_CAMERA};
+use windows::Win32::Media::KernelStreaming::{
+    IKsControl, IKsPropertySet, KSCATEGORY_CAPTURE, KSCATEGORY_VIDEO, KSCATEGORY_VIDEO_CAMERA,
+};
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFAttributes, IMFGetService, IMFMediaEventGenerator, IMFMediaSource,
     IMFMediaSourceEx, IMFRealTimeClientEx, IMFSampleAllocatorControl, IMFShutdown,
@@ -308,7 +310,11 @@ fn test_mf_virtual_camera() {
     let clsid_str = format_clsid_str(VCAM_CLSID);
     let friendly = HSTRING::from("vcam-test diagnostic camera");
     let clsid_h = HSTRING::from(&clsid_str);
-    let categories = [KSCATEGORY_VIDEO_CAMERA];
+    let categories = [
+        KSCATEGORY_VIDEO_CAMERA,
+        KSCATEGORY_VIDEO,
+        KSCATEGORY_CAPTURE,
+    ];
 
     println!("[INFO] CLSID: {clsid_str}");
 
