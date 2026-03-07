@@ -125,15 +125,7 @@ Set-ItemProperty -Path $InProcPath -Name '(Default)' -Value (Join-Path $TargetDi
 Set-ItemProperty -Path $InProcPath -Name 'ThreadingModel' -Value 'Both'
 Write-Host "  $InProcPath -> $(Join-Path $TargetDir 'vcam_source.dll')"
 
-# Step 6: Register device interface categories for OBS (DirectShow) discovery
-Write-Host 'Registering device interface categories for OBS compatibility...'
-$CapPath = "$ClsidRegPath\Capabilities"
-New-Item -Path $CapPath -Force | Out-Null
-Set-ItemProperty -Path $CapPath -Name 'KSCATEGORY_VIDEO' -Value '{6994AD04-93E7-11D0-A3CC-00A0C9223196}'
-Set-ItemProperty -Path $CapPath -Name 'KSCATEGORY_CAPTURE' -Value '{65E8773D-8F56-11D0-A3B9-00A0C9223196}'
-Write-Host "  $CapPath -> KSCATEGORY_VIDEO, KSCATEGORY_CAPTURE"
-
-# Step 7: Verify
+# Step 6: Verify
 $registered = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
 if ($registered) {
     Write-Host "`nRegistered successfully:"
