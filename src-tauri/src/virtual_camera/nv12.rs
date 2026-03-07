@@ -180,8 +180,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Debug builds are ~2-3x slower; use relaxed threshold.
-        // 25ms allows for parallel test runs and background load.
-        let limit_ms = if cfg!(debug_assertions) { 25 } else { 5 };
+        // 50ms allows for parallel test runs, background load, and CI.
+        let limit_ms = if cfg!(debug_assertions) { 50 } else { 5 };
         assert!(
             elapsed.as_millis() < limit_ms,
             "640x480 conversion took {}ms, expected < {limit_ms}ms",

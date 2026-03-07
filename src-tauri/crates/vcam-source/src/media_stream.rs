@@ -39,6 +39,8 @@ pub(crate) struct VCamMediaStream {
     shm_reader: Option<Arc<SharedMemoryReader>>,
     /// Last sequence number we delivered, to avoid re-delivering the same frame.
     last_sequence: Mutex<u64>,
+    /// Consecutive black frames delivered (for periodic stall diagnostics).
+    black_frame_count: std::sync::atomic::AtomicU64,
 }
 
 impl VCamMediaStream {
@@ -70,6 +72,7 @@ impl VCamMediaStream {
             stream_state: Mutex::new(MF_STREAM_STATE_STOPPED),
             shm_reader,
             last_sequence: Mutex::new(0),
+            black_frame_count: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -118,9 +121,18 @@ impl VCamMediaStream {
             let mut last_seq = self.last_sequence.lock().unwrap();
             if seq > *last_seq {
                 *last_seq = seq;
+                self.black_frame_count.store(0, Ordering::Relaxed);
                 if let Some(data) = reader.read_frame() {
                     return (data.to_vec(), width, height);
                 }
+            }
+
+            // Log periodically when the pump appears stalled (same sequence).
+            let count = self.black_frame_count.fetch_add(1, Ordering::Relaxed);
+            if count > 0 && count % 30 == 0 {
+                crate::trace::trace(&format!(
+                    "WARN: delivering black frame — pump stalled at seq {seq} ({count} consecutive)"
+                ));
             }
         } else {
             crate::trace::trace("WARN: read_frame_or_black called but no SharedMemoryReader set");

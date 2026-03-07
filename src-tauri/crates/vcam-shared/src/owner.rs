@@ -7,7 +7,7 @@ mod platform {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, DeleteFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_ALWAYS,
+        CreateFileW, DeleteFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
     };
     use windows::Win32::System::Memory::{
         CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
@@ -52,15 +52,15 @@ mod platform {
 
             let wide_path = path_to_wide(file_path);
 
-            // Open or create the file with read-write access, allowing readers
-            // to open it concurrently.
+            // Always create a fresh file to avoid stale data from a previous
+            // crash. CREATE_ALWAYS truncates any existing file.
             let file_handle = unsafe {
                 CreateFileW(
                     PCWSTR(wide_path.as_ptr()),
                     (GENERIC_READ | GENERIC_WRITE).0,
                     FILE_SHARE_READ,
                     None,
-                    OPEN_ALWAYS,
+                    CREATE_ALWAYS,
                     FILE_ATTRIBUTE_NORMAL,
                     None,
                 )?

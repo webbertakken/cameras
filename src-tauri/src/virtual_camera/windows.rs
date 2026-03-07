@@ -12,7 +12,9 @@ use std::thread::JoinHandle;
 use tracing::{debug, error, info, warn};
 use windows::core::{GUID, HSTRING};
 use windows::Win32::Devices::Properties::DEVPROP_TYPE_GUID;
-use windows::Win32::Media::KernelStreaming::KSCATEGORY_VIDEO_CAMERA;
+use windows::Win32::Media::KernelStreaming::{
+    KSCATEGORY_CAPTURE, KSCATEGORY_VIDEO, KSCATEGORY_VIDEO_CAMERA,
+};
 use windows::Win32::Media::MediaFoundation::{
     IMFVirtualCamera, MFCreateVirtualCamera, MFVirtualCameraAccess_CurrentUser,
     MFVirtualCameraLifetime_Session, MFVirtualCameraType_SoftwareCameraSource,
@@ -69,7 +71,13 @@ impl MfVirtualCamera {
 
         let friendly_name_h = HSTRING::from(&friendly_name);
         let clsid_h = HSTRING::from(&clsid_str);
-        let categories = [KSCATEGORY_VIDEO_CAMERA];
+        // Register under all three categories so FrameServer's DirectShow
+        // compatibility bridge exposes the device to OBS and other DS apps.
+        let categories = [
+            KSCATEGORY_VIDEO_CAMERA,
+            KSCATEGORY_VIDEO,
+            KSCATEGORY_CAPTURE,
+        ];
 
         info!("Calling MFCreateVirtualCamera...");
         let vcam = unsafe {
