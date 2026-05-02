@@ -66,5 +66,10 @@
     "*.rs": [
       "rustfmt --edition 2021"
     ]
+  },
+  "dependenciesMeta": {
+    "esbuild": {
+      "built": true
+    }
   }
 }
