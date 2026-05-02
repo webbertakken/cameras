@@ -5,7 +5,7 @@
 ### 0.1 Create `DEVELOPMENT.md`
 
 - Create `DEVELOPMENT.md` in the repo root covering:
-  - General dev setup: Rust (1.77.2+), Node (22.x via Volta), Yarn (4.x via Volta), Tauri v2 prerequisites (platform-specific system deps)
+  - General dev setup: Rust (1.77.2+), Node (22.x via mise — see `mise.toml`), Yarn (4.x via Corepack — pinned in `package.json` `packageManager`), Tauri v2 prerequisites (platform-specific system deps)
   - EDSDK setup: where to download the SDK (Canon developer portal), where to place DLLs (`src-tauri/lib/edsdk/`), how to build with `--features canon`, what happens without the SDK (mock-only, tests pass, feature-gated code skipped)
   - Placeholder sections for future SDKs (GoPro HTTP API, etc.)
 - Keep concise — bullet points, no essays

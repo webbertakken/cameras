@@ -21,7 +21,7 @@ Desktop app for managing camera settings — brightness, contrast, white balance
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) 1.77.2+
-- [Volta](https://volta.sh/) (manages Node 22 and Yarn 4.9.2 automatically)
+- [mise](https://mise.jdx.dev/) (manages Node 22 from `mise.toml`; Yarn 4.9.2 is activated via Corepack from `packageManager`)
 - Platform dependencies for [Tauri v2](https://v2.tauri.app/start/prerequisites/)
 
 ### Setup
