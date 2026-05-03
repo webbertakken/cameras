@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - **Rust** 1.77.2+ (via [rustup](https://rustup.rs/))
-- **Node.js** 22.x (via [Volta](https://volta.sh/))
-- **Yarn** 4.x (via Volta)
+- **Node.js** 22.x (via [mise](https://mise.jdx.dev/) — see `mise.toml`)
+- **Yarn** 4.x (via Corepack — pinned in `package.json` `packageManager`)
 - **Tauri v2 system deps** — see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
   - Windows: Visual Studio Build Tools, WebView2
   - macOS: Xcode command line tools

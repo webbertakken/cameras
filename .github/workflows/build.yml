@@ -89,6 +89,13 @@ jobs:
         if: matrix.target == 'macos-x64'
         run: rustup target add x86_64-apple-darwin
 
+      - name: Read Node version from mise.toml
+        id: node
+        shell: bash
+        run:
+          echo "version=$(grep -E '^node\s*=' mise.toml | sed -E 's/.*"([^"]+)".*/\1/')" >>
+          "$GITHUB_OUTPUT"
+
       - name: Install package manager (from package.json)
         if: runner.os != 'Windows'
         run: |
@@ -98,8 +105,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
-          cache: ${{ runner.os != 'Windows' && 'yarn' || '' }}
+          node-version: ${{ steps.node.outputs.version }}
 
       - name: Install package manager (Windows)
         if: runner.os == 'Windows'
@@ -107,8 +113,32 @@ jobs:
           corepack enable
           corepack install
 
+      - name: Resolve yarn cache folder
+        id: yarn-config
+        shell: bash
+        run: echo "cacheFolder=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore yarn install cache (node_modules + cacheFolder + install-state)
+        id: yarn-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ${{ steps.yarn-config.outputs.cacheFolder }}
+            .yarn/install-state.gz
+          key:
+            yarn-${{ runner.os }}-node${{ steps.node.outputs.version }}-${{
+            hashFiles('yarn.lock') }}
+          restore-keys: |
+            yarn-${{ runner.os }}-node${{ steps.node.outputs.version }}-
+
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --immutable
+        shell: bash
+        env:
+          YARN_ENABLE_HARDENED_MODE: 'false'
+        run: |
+          case "$(yarn --version)" in 1.*) echo 'expected up-to-date yarn version'; exit 1 ;; esac
+          yarn install --immutable
 
       - name: Build and upload (release)
         if: startsWith(github.ref, 'refs/tags/v')
