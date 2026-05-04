@@ -1,0 +1,154 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "import",
+    "jsdoc",
+    "promise",
+    "react",
+    "react-hooks",
+    "react-perf",
+    "jsx-a11y",
+    "node"
+  ],
+
+  "jsPlugins": [{ "name": "unicorn-x", "specifier": "eslint-plugin-unicorn" }],
+
+  "categories": {
+    "correctness": "error"
+  },
+
+  "rules": {
+    "typescript/no-explicit-any": "warn",
+    "typescript/ban-ts-comment": [
+      "error",
+      {
+        "ts-ignore": "allow-with-description",
+        "ts-expect-error": "allow-with-description",
+        "ts-nocheck": true,
+        "ts-check": false
+      }
+    ],
+
+    "unicorn/no-abusive-eslint-disable": "error",
+    "unicorn/no-null": "off",
+    "unicorn/no-useless-undefined": "off",
+    "unicorn/numeric-separators-style": "off",
+    "unicorn/no-await-expression-member": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-nested-ternary": "off",
+    "unicorn/prefer-ternary": "off",
+    "unicorn/prefer-module": "off",
+    "unicorn/prefer-string-replace-all": "off",
+    "unicorn/prefer-string-raw": "off",
+    "unicorn/no-array-for-each": "off",
+    "unicorn/prefer-node-protocol": "off",
+
+    "unicorn-x/prevent-abbreviations": [
+      "error",
+      {
+        "replacements": {
+          "props": { "properties": false },
+          "Props": { "Properties": false },
+          "ref": { "reference": false },
+          "env": { "environment": false },
+          "fn": { "function": false },
+          "ctx": { "context": false },
+          "msg": { "message": false },
+          "i": { "index": false },
+          "j": { "index": false },
+          "acc": { "accumulator": false },
+          "err": { "error": false },
+          "req": { "request": false },
+          "res": { "response": false },
+          "neg": { "negative": false },
+          "utils": { "utilities": false },
+          "params": { "parameters": false },
+          "args": { "arguments": false, "arguments_": false },
+          "dir": { "directory": false, "direction": false },
+          "obj": { "object": false },
+          "attr": { "attribute": false },
+          "str": { "string": false },
+          "tmp": { "temporary": false },
+          "dest": { "destination": false },
+          "isDev": { "isDevelopment": false },
+          "isProd": { "isProduction": false },
+          "e": { "event": false }
+        },
+        "allowList": {
+          "isDev": true,
+          "isProd": true,
+          "params": true,
+          "e": true,
+          "err": true
+        }
+      }
+    ]
+  },
+
+  "overrides": [
+    {
+      "files": ["src/**/*.{ts,tsx}"],
+      "rules": {
+        "react-hooks/exhaustive-deps": "off",
+        "react/react-in-jsx-scope": "off",
+        "react/jsx-no-target-blank": "off",
+        "react/no-unknown-property": "off",
+        "react/no-unescaped-entities": "off",
+        "jsx-a11y/alt-text": "off",
+        "jsx-a11y/anchor-is-valid": "off",
+        "jsx-a11y/no-autofocus": "off",
+        "jsx-a11y/click-events-have-key-events": "off",
+        "jsx-a11y/no-static-element-interactions": "off",
+        "jsx-a11y/label-has-associated-control": "off",
+        "jsx-a11y/html-has-lang": "off",
+        "jsx-a11y/media-has-caption": "off",
+        "jsx-a11y/aria-role": "off"
+      }
+    },
+    {
+      "files": [
+        "**/*.test.{ts,tsx}",
+        "**/*.spec.{ts,tsx}",
+        "**/__tests__/**/*.{ts,tsx}",
+        "**/__mocks__/**/*.{ts,tsx}"
+      ],
+      "plugins": ["vitest"],
+      "rules": {
+        "unicorn/no-null": "off",
+        "vitest/require-mock-type-parameters": "off",
+        "vitest/no-conditional-expect": "off",
+        "vitest/no-disabled-tests": "off",
+        "vitest/expect-expect": "off",
+        "vitest/valid-expect": "off",
+        "typescript/ban-ts-comment": [
+          "error",
+          {
+            "ts-ignore": false,
+            "ts-expect-error": "allow-with-description",
+            "ts-nocheck": false,
+            "ts-check": false
+          }
+        ]
+      }
+    }
+  ],
+
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/.yarn/**",
+    "**/__screenshots__/**",
+    "src-tauri/target/**",
+    "src-tauri/gen/**",
+    "**/*.config.js",
+    "**/*.config.mjs",
+    "**/*.config.ts"
+  ]
+}

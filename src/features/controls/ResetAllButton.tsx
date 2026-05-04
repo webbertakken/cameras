@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react'
 import type { ResetResult } from '../../types/camera'
 import { useToastStore } from '../notifications/useToast'
-import { ConfirmModal } from './ConfirmModal'
-import './ResetAllButton.css'
 import { resetAllToDefaults } from './api'
+import './ResetAllButton.css'
+import { ConfirmModal } from './ConfirmModal'
 
 interface ResetAllButtonProps {
   cameraId: string

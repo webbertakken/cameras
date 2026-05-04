@@ -7,18 +7,19 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "tauri dev --features canon",
+    "dev": "node scripts/ensure-husky.mjs && tauri dev --features canon",
     "dev:vite": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "lint": "eslint .",
-    "format": "prettier --check .",
-    "format:fix": "prettier --write .",
+    "lint": "yarn oxlint --deny-warnings --report-unused-disable-directives",
+    "format": "oxfmt --write -c .oxfmtrc.json",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest run --project unit --passWithNoTests",
+    "test": "node scripts/ensure-husky.mjs && vitest run --project unit --passWithNoTests",
     "test:visual": "vitest run --project visual",
-    "prepare": "husky"
+    "prepare": "husky",
+    "setup:hooks": "node scripts/ensure-husky.mjs",
+    "format:check": "oxfmt --check -c .oxfmtrc.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
@@ -27,7 +28,6 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@eslint/js": "9",
     "@tauri-apps/cli": "^2.10.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -40,16 +40,14 @@
     "@vitest/browser": "^4.0.18",
     "@vitest/browser-playwright": "^4.0.18",
     "eslint": "9",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
+    "eslint-plugin-unicorn": "^64.0.0",
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "lint-staged": "^16.2.7",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0",
     "playwright": "^1.58.2",
-    "prettier": "^3.8.1",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.56.1",
     "vite": "^6.1.0",
     "vitest": "^4.0.18",
     "vitest-browser-react": "^2.0.5"
@@ -57,11 +55,11 @@
   "packageManager": "yarn@4.14.1",
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
+      "oxlint --fix --deny-warnings --report-unused-disable-directives",
+      "oxfmt --write"
     ],
-    "*.{js,json,md,yml,yaml}": [
-      "prettier --write"
+    "*.{js,json,md,yml,yaml,jsonc}": [
+      "oxfmt --write"
     ],
     "*.rs": [
       "rustfmt --edition 2021"

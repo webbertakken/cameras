@@ -28,7 +28,7 @@ export const useCameraStore = create<CameraStore>((set, get) => ({
 
   removeCamera: (id) =>
     set((state) => {
-      const idx = state.cameras.findIndex((c) => c.id === id)
+      const index = state.cameras.findIndex((c) => c.id === id)
       const remaining = state.cameras.filter((c) => c.id !== id)
 
       if (state.selectedId !== id) {
@@ -37,7 +37,7 @@ export const useCameraStore = create<CameraStore>((set, get) => ({
 
       // Auto-select the next camera, or previous if last was removed
       const nextId =
-        remaining.length === 0 ? null : remaining[Math.min(idx, remaining.length - 1)].id
+        remaining.length === 0 ? null : remaining[Math.min(index, remaining.length - 1)].id
 
       return { cameras: remaining, selectedId: nextId }
     }),
