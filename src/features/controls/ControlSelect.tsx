@@ -30,7 +30,6 @@ export function ControlSelect({
       <label className="control-select__label">{descriptor.name}</label>
       <select
         className="control-select__input"
-        role="combobox"
         aria-label={descriptor.name}
         value={String(value)}
         disabled={disabled}

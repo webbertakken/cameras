@@ -1,3 +1,9 @@
 #!/bin/sh
 yarn lint-staged
-cd src-tauri && cargo clippy -- -D warnings && cargo test --lib
+
+# Run Rust checks only if Rust sources or Cargo files are staged.
+# Avoids forcing every JS contributor to have the full GTK / Tauri Rust
+# toolchain installed locally — CI runs the Rust checks separately.
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '^src-tauri/.+\.(rs|toml)$|^src-tauri/Cargo\.lock$'; then
+  cd src-tauri && cargo clippy -- -D warnings && cargo test --lib
+fi

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useEffect, useRef, useState } from 'react'
 
 /** Polls for sidebar thumbnail frames at 5fps (200ms interval). */
 export function useThumbnail(deviceId: string | null): string | null {
@@ -20,7 +20,7 @@ export function useThumbnail(deviceId: string | null): string | null {
     intervalRef.current = setInterval(async () => {
       try {
         const base64 = await invoke<string>('get_thumbnail', { deviceId })
-        setState((prev) => ({ ...prev, src: `data:image/jpeg;base64,${base64}` }))
+        setState((previous) => ({ ...previous, src: `data:image/jpeg;base64,${base64}` }))
       } catch {
         // Thumbnail not available yet — skip
       }

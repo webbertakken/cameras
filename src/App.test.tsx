@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CameraDevice } from './types/camera'
 import { useCameraStore } from './features/camera-sidebar/store'
+import type { CameraDevice } from './types/camera'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
