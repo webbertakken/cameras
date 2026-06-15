@@ -43,6 +43,49 @@ pub fn compress_thumbnail(
     compress_jpeg(&resized_data, thumb_width, thumb_height, 70)
 }
 
+/// Compress a JPEG image into a thumbnail by decoding, downscaling, and re-encoding.
+///
+/// Takes existing JPEG bytes, decodes to RGB, downscales to `thumb_width x thumb_height`,
+/// and re-encodes at quality 70. Used for Canon cameras that deliver native JPEG frames.
+pub fn compress_thumbnail_from_jpeg(
+    jpeg_data: &[u8],
+    thumb_width: u32,
+    thumb_height: u32,
+) -> Result<Vec<u8>, String> {
+    use fast_image_resize as fr;
+    use fr::images::Image;
+    use image::ImageReader;
+    use std::io::Cursor;
+
+    // Decode JPEG to RGB
+    let img = ImageReader::new(Cursor::new(jpeg_data))
+        .with_guessed_format()
+        .map_err(|e| format!("failed to read JPEG: {e}"))?
+        .decode()
+        .map_err(|e| format!("failed to decode JPEG: {e}"))?
+        .into_rgb8();
+
+    let (src_w, src_h) = img.dimensions();
+    let src_data = img.into_raw();
+
+    // Create source image for resizer
+    let src_image = Image::from_vec_u8(src_w, src_h, src_data, fr::PixelType::U8x3)
+        .map_err(|e| format!("failed to create source image: {e}"))?;
+
+    // Create destination image
+    let mut dst_image = Image::new(thumb_width, thumb_height, fr::PixelType::U8x3);
+
+    // Resize
+    let mut resizer = fr::Resizer::new();
+    resizer
+        .resize(&src_image, &mut dst_image, None)
+        .map_err(|e| format!("failed to resize: {e}"))?;
+
+    // Encode the resized image as JPEG
+    let resized_data = dst_image.into_vec();
+    Ok(compress_jpeg(&resized_data, thumb_width, thumb_height, 70))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +154,37 @@ mod tests {
             "thumbnail size {} exceeds 10KB",
             thumb.len()
         );
+    }
+
+    /// Create a valid JPEG from a synthetic RGB image for testing.
+    fn make_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+        let rgb = make_test_rgb(width, height);
+        compress_jpeg(&rgb, width, height, 85)
+    }
+
+    #[test]
+    fn compress_thumbnail_from_jpeg_produces_valid_jpeg() {
+        let jpeg = make_test_jpeg(640, 480);
+        let thumb = compress_thumbnail_from_jpeg(&jpeg, 160, 120).unwrap();
+        assert_eq!(thumb[0], 0xFF, "missing JPEG SOI marker");
+        assert_eq!(thumb[1], 0xD8, "missing JPEG SOI marker");
+    }
+
+    #[test]
+    fn compress_thumbnail_from_jpeg_output_under_10kb() {
+        let jpeg = make_test_jpeg(1920, 1080);
+        let thumb = compress_thumbnail_from_jpeg(&jpeg, 160, 120).unwrap();
+        assert!(
+            thumb.len() < 10_000,
+            "thumbnail size {} exceeds 10KB",
+            thumb.len()
+        );
+    }
+
+    #[test]
+    fn compress_thumbnail_from_jpeg_invalid_input_returns_error() {
+        let garbage = vec![0x00, 0x01, 0x02, 0x03];
+        let result = compress_thumbnail_from_jpeg(&garbage, 160, 120);
+        assert!(result.is_err(), "expected error for invalid JPEG input");
     }
 }
