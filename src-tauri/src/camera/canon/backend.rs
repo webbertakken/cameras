@@ -102,7 +102,7 @@ impl<S: EdsSdkApi> CanonBackend<S> {
     /// Close all open sessions. Called during drop and re-enumeration cleanup.
     fn close_all_sessions(&self) {
         let cameras = self.cameras.lock().unwrap();
-        for (_, cam) in cameras.iter() {
+        for cam in cameras.values() {
             if cam.session_open {
                 if let Err(e) = self.sdk.close_session(cam.handle) {
                     tracing::warn!("Failed to close session for {}: {e}", cam.device.name);
@@ -145,7 +145,7 @@ impl<S: EdsSdkApi + 'static> CameraBackend for CanonBackend<S> {
         // EDS_ERR_INTERNAL_ERROR (0x00000002).
         {
             let cameras = self.cameras.lock().unwrap();
-            for (_, cam) in cameras.iter() {
+            for cam in cameras.values() {
                 if cam.session_open {
                     if let Err(e) = self.sdk.close_session(cam.handle) {
                         tracing::debug!(
