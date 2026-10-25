@@ -18,9 +18,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          # app-id rather than client-id: actionlint rejects client-id until
-          # rhysd/actionlint#668 ships.
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          # Takes the app ID or the client ID; GitHub accepts either as issuer.
+          client-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
