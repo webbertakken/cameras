@@ -236,7 +236,7 @@ impl CaptureSession {
 
             Some(
                 std::thread::Builder::new()
-                    .name(format!("watchdog-{}", &device_id))
+                    .name(format!("watchdog-{}", device_id))
                     .spawn(move || {
                         Self::run_watchdog(
                             &device_id_wd,
