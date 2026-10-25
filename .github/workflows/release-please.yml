@@ -5,16 +5,28 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     name: Release please
     runs-on: ubuntu-latest
     steps:
+      # A GitHub App token, unlike GITHUB_TOKEN, lets the release PR trigger
+      # the required checks, and unlike a PAT it never expires.
+      - name: Mint release app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          # app-id rather than client-id: actionlint rejects client-id until
+          # rhysd/actionlint#668 ships.
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
