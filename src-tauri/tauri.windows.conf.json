@@ -1,0 +1,12 @@
+{
+  "build": {
+    "beforeBuildCommand": "yarn build:vcam:release && yarn build"
+  },
+  "bundle": {
+    "resources": {
+      "target/release/vcam_source.dll": "vcam_source.dll",
+      "msix/AppxManifest.xml": "AppxManifest.xml",
+      "icons/icon.png": "icons/icon.png"
+    }
+  }
+}
