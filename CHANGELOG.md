@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0](https://github.com/webbertakken/cameras/compare/v0.7.1...v0.8.0) (2026-10-25)
+
+
+### Features
+
+* **virtual-camera:** Windows MF virtual camera ([#61](https://github.com/webbertakken/cameras/issues/61)) ([f51c8a2](https://github.com/webbertakken/cameras/commit/f51c8a252d96162fc6e034bc0e663146d02d6ce4))
+
+
+### Bug fixes
+
+* **ci:** satisfy clippy lints from Rust 1.99 ([#66](https://github.com/webbertakken/cameras/issues/66)) ([c2dfabe](https://github.com/webbertakken/cameras/commit/c2dfabecab62401d0b0a40ada8251cae1326fe2e))
+* **preview:** add Canon JPEG-based sidebar thumbnails ([#60](https://github.com/webbertakken/cameras/issues/60)) ([ae24b13](https://github.com/webbertakken/cameras/commit/ae24b13aa59042ff94141ddf10f3d835bd01f24d))
+* **vcam:** bundle virtual camera in the installer ([#69](https://github.com/webbertakken/cameras/issues/69)) ([11708bd](https://github.com/webbertakken/cameras/commit/11708bd5cde14660e93bde818e324c795fce2a2d))
+
+
+### Maintenance
+
+* enable Renovate ([#65](https://github.com/webbertakken/cameras/issues/65)) ([07be876](https://github.com/webbertakken/cameras/commit/07be876bd16868baa651f090576773be40a3fb81))
+* migrate to mise + bump yarn to 4.14.1 + cache pattern ([#62](https://github.com/webbertakken/cameras/issues/62)) ([313ffe4](https://github.com/webbertakken/cameras/commit/313ffe4d3f5b60b10edf3f77932bfb1bde3ef527))
+* mint release token from a GitHub App ([#67](https://github.com/webbertakken/cameras/issues/67)) ([fb2dc59](https://github.com/webbertakken/cameras/commit/fb2dc59d6ad721ce6b8f66de85bb6d443402b851))
+* quality-tightening (oxfmt + oxlint + husky) ([#63](https://github.com/webbertakken/cameras/issues/63)) ([4bc9a0b](https://github.com/webbertakken/cameras/commit/4bc9a0b2d66812bb230526111e28922086dc7fab))
+
 ## [0.7.1](https://github.com/webbertakken/cameras/compare/v0.7.0...v0.7.1) (2026-03-03)
 
 ### Bug fixes
