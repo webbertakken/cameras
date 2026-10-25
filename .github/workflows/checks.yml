@@ -14,7 +14,7 @@ jobs:
     name: Frontend checks
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read Node version from mise.toml
         id: node
@@ -26,7 +26,7 @@ jobs:
           corepack enable
           corepack install
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.node.outputs.version }}
 
@@ -36,7 +36,7 @@ jobs:
 
       - name: Restore yarn install cache (node_modules + cacheFolder + install-state)
         id: yarn-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -70,7 +70,7 @@ jobs:
     name: Rust checks
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -95,7 +95,7 @@ jobs:
           corepack enable
           corepack install
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.node.outputs.version }}
 
@@ -105,7 +105,7 @@ jobs:
 
       - name: Restore yarn install cache (node_modules + cacheFolder + install-state)
         id: yarn-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -155,7 +155,7 @@ jobs:
     name: Visual regression
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read Node version from mise.toml
         id: node
@@ -167,7 +167,7 @@ jobs:
           corepack enable
           corepack install
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.node.outputs.version }}
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Restore yarn install cache (node_modules + cacheFolder + install-state)
         id: yarn-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload diff artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression-diffs
           path: src/**/__screenshots__/**/*.png

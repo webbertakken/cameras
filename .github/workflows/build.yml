@@ -39,15 +39,15 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Download Canon EDSDK
         shell: bash
@@ -110,7 +110,7 @@ jobs:
           corepack install
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.node.outputs.version }}
 
@@ -127,7 +127,7 @@ jobs:
 
       - name: Restore yarn install cache (node_modules + cacheFolder + install-state)
         id: yarn-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             node_modules
@@ -179,7 +179,7 @@ jobs:
 
       - name: Upload MSIX to release (Windows)
         if: ${{ matrix.target == 'windows-x64' && startsWith(github.ref, 'refs/tags/v') }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: src-tauri/msix/*.msix
         env:
@@ -187,7 +187,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.target }}
           path: |
