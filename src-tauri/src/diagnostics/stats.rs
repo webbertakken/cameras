@@ -1,6 +1,9 @@
 use serde::Serialize;
 use std::time::Instant;
 
+/// EMA smoothing factor for latency.  α = 0.1 gives a ~10-frame window.
+const LATENCY_EMA_ALPHA: f64 = 0.1;
+
 /// Collects diagnostic statistics for a camera preview session.
 pub struct DiagnosticStats {
     frame_count: u64,
@@ -8,7 +11,12 @@ pub struct DiagnosticStats {
     total_bytes: u64,
     start_time: Instant,
     last_frame_time: Option<Instant>,
-    latency_us: u64,
+    /// EMA-smoothed latency in microseconds.
+    latency_ema_us: f64,
+    /// Clock-base offset recorded on the first frame so that capture
+    /// timestamps from an unrelated clock (e.g. DirectShow stream time) are
+    /// normalised before computing latency.
+    clock_offset_us: Option<i64>,
     usb_bus_info: Option<String>,
 }
 
@@ -34,7 +42,8 @@ impl DiagnosticStats {
             total_bytes: 0,
             start_time: Instant::now(),
             last_frame_time: None,
-            latency_us: 0,
+            latency_ema_us: 0.0,
+            clock_offset_us: None,
             usb_bus_info: None,
         }
     }
@@ -45,15 +54,53 @@ impl DiagnosticStats {
     }
 
     /// Record a successfully captured frame.
+    ///
+    /// `capture_timestamp_us` may originate from any monotonic clock (e.g.
+    /// DirectShow stream time, or [`Self::elapsed_us`]).  On the first frame
+    /// the offset between that clock and our internal clock is recorded so
+    /// that subsequent latency values only reflect per-frame processing
+    /// delay, not a fixed clock-base mismatch.
     pub fn record_frame(&mut self, bytes: usize, capture_timestamp_us: u64) {
         self.frame_count += 1;
         self.total_bytes += bytes as u64;
         self.last_frame_time = Some(Instant::now());
 
-        // Calculate latency as time since capture timestamp
         let now_us = self.start_time.elapsed().as_micros() as u64;
-        if capture_timestamp_us <= now_us {
-            self.latency_us = now_us - capture_timestamp_us;
+        let raw_delta = now_us as i64 - capture_timestamp_us as i64;
+
+        // Calibrate clock offset on the first frame.
+        let offset = *self.clock_offset_us.get_or_insert(raw_delta);
+
+        let sample_us = (raw_delta - offset).unsigned_abs();
+
+        // EMA: on the very first frame, seed the average; otherwise blend.
+        if self.frame_count == 1 {
+            self.latency_ema_us = sample_us as f64;
+        } else {
+            self.latency_ema_us = LATENCY_EMA_ALPHA * sample_us as f64
+                + (1.0 - LATENCY_EMA_ALPHA) * self.latency_ema_us;
+        }
+    }
+
+    /// Record a successfully captured frame with a directly-measured latency.
+    ///
+    /// Use this for sources (e.g. Canon live view) that measure their own
+    /// per-frame download/transfer time directly via [`std::time::Instant`],
+    /// rather than carrying a capture timestamp from an external clock.
+    ///
+    /// This bypasses the clock-offset calibration logic in [`Self::record_frame`]
+    /// and feeds the provided `latency_us` value directly into the EMA.
+    pub fn record_frame_with_latency(&mut self, bytes: usize, latency_us: u64) {
+        self.frame_count += 1;
+        self.total_bytes += bytes as u64;
+        self.last_frame_time = Some(Instant::now());
+
+        // EMA: on the very first frame, seed the average; otherwise blend.
+        if self.frame_count == 1 {
+            self.latency_ema_us = latency_us as f64;
+        } else {
+            self.latency_ema_us = LATENCY_EMA_ALPHA * latency_us as f64
+                + (1.0 - LATENCY_EMA_ALPHA) * self.latency_ema_us;
         }
     }
 
@@ -80,9 +127,9 @@ impl DiagnosticStats {
         (self.drop_count as f64 / total as f64) * 100.0
     }
 
-    /// Latest capture-to-delivery latency in milliseconds.
+    /// EMA-smoothed capture-to-delivery latency in milliseconds.
     pub fn latency_ms(&self) -> f64 {
-        self.latency_us as f64 / 1000.0
+        self.latency_ema_us / 1000.0
     }
 
     /// Bandwidth in bytes per second.
@@ -94,6 +141,14 @@ impl DiagnosticStats {
         (self.total_bytes as f64 / elapsed) as u64
     }
 
+    /// Elapsed microseconds since this stats instance was created.
+    ///
+    /// Useful for Canon live view where there is no external capture
+    /// timestamp — the polling thread uses this as the frame timestamp.
+    pub fn elapsed_us(&self) -> u64 {
+        self.start_time.elapsed().as_micros() as u64
+    }
+
     /// Reset all counters.
     pub fn reset(&mut self) {
         self.frame_count = 0;
@@ -101,7 +156,8 @@ impl DiagnosticStats {
         self.total_bytes = 0;
         self.start_time = Instant::now();
         self.last_frame_time = None;
-        self.latency_us = 0;
+        self.latency_ema_us = 0.0;
+        self.clock_offset_us = None;
         self.usb_bus_info = None;
     }
 
@@ -137,7 +193,7 @@ mod tests {
         assert_eq!(stats.frame_count, 0);
         assert_eq!(stats.drop_count, 0);
         assert_eq!(stats.total_bytes, 0);
-        assert_eq!(stats.latency_us, 0);
+        assert_eq!(stats.latency_ms(), 0.0);
     }
 
     #[test]
@@ -245,5 +301,156 @@ mod tests {
         let snap = stats.snapshot();
         let json = serde_json::to_value(&snap).unwrap();
         assert_eq!(json["usbBusInfo"], "USB 2.0 Bus 1");
+    }
+
+    #[test]
+    fn latency_stays_low_when_timestamps_use_different_clock_base() {
+        // Simulates the BRIO bug: DiagnosticStats is created 15 seconds before
+        // the capture graph starts.  DirectShow timestamps start at 0 when the
+        // graph runs, but elapsed_us() is already ~15 000 000 by then.
+        // The old code reported now_us - capture_ts ≈ 15 000ms as "latency".
+        //
+        // In a real session both clocks tick at the same rate — only the
+        // origin differs.  We simulate this by feeding capture_ts values that
+        // are exactly `elapsed_us() - 15_000_000`, i.e. offset by 15s.
+        let mut stats = DiagnosticStats::new();
+        // Backdate so elapsed_us() starts at ~15 000 000
+        stats.start_time = Instant::now() - Duration::from_secs(15);
+
+        let base_offset_us: u64 = 15_000_000;
+        for _i in 0..30 {
+            // Capture timestamp on the DirectShow clock (= our clock minus the
+            // fixed setup gap).  Both clocks advance in lockstep in reality.
+            let now = stats.elapsed_us();
+            let capture_ts = now.saturating_sub(base_offset_us);
+            stats.record_frame(1000, capture_ts);
+        }
+
+        let latency = stats.latency_ms();
+        assert!(
+            latency < 50.0,
+            "latency should reflect per-frame delay, not the 15s setup gap; \
+             got {latency:.1}ms"
+        );
+    }
+
+    #[test]
+    fn latency_ema_converges_to_recent_values() {
+        let mut stats = DiagnosticStats::new();
+
+        // Feed frames with a consistent small delta between elapsed_us() and
+        // the timestamp passed to record_frame.
+        for _i in 0..30 {
+            let ts = stats.elapsed_us();
+            // Small sleep to create a measurable but tiny latency
+            thread::sleep(Duration::from_millis(1));
+            stats.record_frame(1000, ts);
+        }
+
+        let latency = stats.latency_ms();
+        // EMA should converge to roughly the 1ms sleep, well under 50ms
+        assert!(
+            latency < 50.0,
+            "EMA latency should be small, got {latency:.1}ms"
+        );
+    }
+
+    #[test]
+    fn elapsed_us_increases_over_time() {
+        let stats = DiagnosticStats::new();
+        let t0 = stats.elapsed_us();
+        thread::sleep(Duration::from_millis(10));
+        let t1 = stats.elapsed_us();
+        assert!(
+            t1 > t0,
+            "elapsed_us should increase over time: t0={t0}, t1={t1}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // record_frame_with_latency tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn record_frame_with_latency_seeds_ema_on_first_frame() {
+        let mut stats = DiagnosticStats::new();
+        stats.record_frame_with_latency(1000, 5_000); // 5ms download
+        assert!(
+            (stats.latency_ms() - 5.0).abs() < 0.1,
+            "first frame should seed EMA to 5ms, got {:.3}ms",
+            stats.latency_ms()
+        );
+    }
+
+    #[test]
+    fn record_frame_with_latency_increments_frame_count() {
+        let mut stats = DiagnosticStats::new();
+        stats.record_frame_with_latency(1000, 5_000);
+        assert_eq!(stats.frame_count, 1);
+        stats.record_frame_with_latency(1000, 5_000);
+        assert_eq!(stats.frame_count, 2);
+    }
+
+    #[test]
+    fn record_frame_with_latency_accumulates_bytes_for_bandwidth() {
+        let mut stats = DiagnosticStats::new();
+        stats.record_frame_with_latency(10_000, 5_000);
+        thread::sleep(Duration::from_millis(50));
+        let bps = stats.bandwidth_bps();
+        assert!(
+            bps > 0,
+            "bandwidth should be positive after bytes recorded, got {bps}"
+        );
+    }
+
+    #[test]
+    fn record_frame_with_latency_blends_ema_on_subsequent_frames() {
+        let mut stats = DiagnosticStats::new();
+        // Seed with 10ms
+        stats.record_frame_with_latency(1000, 10_000);
+        // Feed several frames at 20ms — EMA should move toward 20ms
+        for _ in 0..30 {
+            stats.record_frame_with_latency(1000, 20_000);
+        }
+        let latency = stats.latency_ms();
+        // After 30 more frames at 20ms, EMA should be significantly above 10ms
+        assert!(
+            latency > 15.0,
+            "EMA should converge toward 20ms after many frames, got {latency:.3}ms"
+        );
+        assert!(
+            latency <= 20.0,
+            "EMA cannot exceed the fed value of 20ms, got {latency:.3}ms"
+        );
+    }
+
+    #[test]
+    fn record_frame_with_latency_never_produces_zero_when_latency_is_nonzero() {
+        // This is the Canon regression test: using elapsed_us as timestamp
+        // would cancel to zero. record_frame_with_latency must not do that.
+        let mut stats = DiagnosticStats::new();
+        // Simulate Canon: download takes 80ms (typical EDSDK EVF image transfer)
+        stats.record_frame_with_latency(384_000, 80_000);
+        assert!(
+            stats.latency_ms() > 0.0,
+            "latency must not collapse to zero; got {:.3}ms",
+            stats.latency_ms()
+        );
+    }
+
+    #[test]
+    fn record_frame_with_latency_does_not_use_clock_offset() {
+        // Ensure the clock_offset calibration logic from record_frame is NOT
+        // applied here, so repeated calls with the same latency give a stable EMA.
+        let mut stats = DiagnosticStats::new();
+        for _ in 0..50 {
+            stats.record_frame_with_latency(1000, 15_000); // constant 15ms
+        }
+        // EMA must be very close to 15ms (within 1ms rounding)
+        let latency = stats.latency_ms();
+        assert!(
+            (latency - 15.0).abs() < 1.0,
+            "stable 15ms feed should yield ~15ms EMA, got {latency:.3}ms"
+        );
     }
 }

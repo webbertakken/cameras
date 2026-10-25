@@ -1,5 +1,11 @@
 # Agents
 
+## Platform support
+
+- **Windows**: Windows 11+ only (Build 22000+). No Windows 10 support.
+- **Linux**: Supported
+- **macOS**: Supported
+
 ## Development approach
 
 - **TDD (Test-Driven Development)** for all implementation
@@ -9,6 +15,12 @@
 - Applies to both Rust (`cargo test`) and frontend (`vitest`)
 - No implementation code without corresponding tests
 - Use `chainlink` cli for tracking issues and tasks (`.chainlink/` is gitignored)
+
+## Virtual camera dev setup
+
+- **Register**: `pwsh scripts/register-vcam-dev.ps1` (one-time, re-run after CLSID or manifest changes)
+- **Register (release)**: `pwsh scripts/register-vcam-dev.ps1 -Release`
+- **Unregister**: `pwsh scripts/register-vcam-dev.ps1 -Unregister`
 
 ## Dev server
 
@@ -105,6 +117,23 @@ cat tmp/dev-server.log
 - **Warning-level lines** — investigate. Fix if related to the change.
 - **Expected success messages for ALL cameras** — not just one.
 - The dev server MUST run with ZERO errors related to the change.
+
+### Step 5: E2E verification via Tauri
+
+Use Tauri's WebDriver or manual UI interaction to verify that user-facing features
+work end-to-end in the running dev app. Quality checks and log review are not
+sufficient — the actual UI buttons and flows must be exercised.
+
+- Confirm the feature's primary action completes without error toasts or console errors
+- Check that the UI state updates correctly (e.g., toggles, status indicators)
+- Verify no regressions in adjacent features visible in the same view
+
+If the button or feature produces an error: diagnose, fix, restart from step 1.
+
+**Important**: Agents MUST interact with the running app themselves (click buttons,
+trigger IPC commands, grab errors) rather than asking the user to test. If a UI
+action produces an error toast, capture it from the logs — never rely on the user
+to report it.
 
 ### Failure protocol
 

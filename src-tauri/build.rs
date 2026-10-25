@@ -1,6 +1,40 @@
 fn main() {
     configure_edsdk();
-    tauri_build::build()
+    copy_vcam_source_dll();
+    stage_msix_assets();
+
+    let windows =
+        tauri_build::WindowsAttributes::new().app_manifest(include_str!("cameras.exe.manifest"));
+    let attrs = tauri_build::Attributes::new().windows_attributes(windows);
+    tauri_build::try_build(attrs).expect("failed to run tauri build script");
+}
+
+/// Ensure `vcam_source.dll` is present in the target directory.
+///
+/// Since `vcam-source` is a workspace member, its DLL lands in the shared
+/// `target/{profile}/` directory alongside `cameras.exe`. This function
+/// verifies the DLL exists and emits a `rerun-if-changed` directive so
+/// Cargo rebuilds when the DLL is updated.
+///
+/// Build `vcam-source` first: `cargo build -p vcam-source`
+fn copy_vcam_source_dll() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "windows" {
+        return;
+    }
+
+    let target_dir = resolve_target_dir();
+    let dll_path = target_dir.join("vcam_source.dll");
+
+    if !dll_path.exists() {
+        println!(
+            "cargo:warning=vcam_source.dll not found at {}. \
+             Build it with `cargo build -p vcam-source`.",
+            dll_path.display()
+        );
+    }
+
+    println!("cargo:rerun-if-changed={}", dll_path.display());
 }
 
 /// Configure EDSDK linking when the `canon` feature is enabled.
@@ -127,6 +161,38 @@ fn configure_edsdk_macos(canon_base: &std::path::Path) {
     println!("cargo:rustc-link-lib=framework=EDSDK");
 
     println!("cargo:rerun-if-changed={}", sdk_dir.display());
+}
+
+/// Stage `AppxManifest.xml` and icon into the target directory for MSIX
+/// sparse package registration during development.
+///
+/// This enables `scripts/register-vcam-dev.ps1` to register the package
+/// without manual file copying — the manifest and icon are always fresh.
+fn stage_msix_assets() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "windows" {
+        return;
+    }
+
+    let manifest_dir =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let target_dir = resolve_target_dir();
+
+    // Copy AppxManifest.xml
+    let manifest_src = manifest_dir.join("msix").join("AppxManifest.xml");
+    if manifest_src.exists() {
+        copy_sdk_file(&manifest_src, &target_dir.join("AppxManifest.xml"));
+    }
+
+    // Copy icon (AppxManifest references icons\icon.png)
+    let icon_src = manifest_dir.join("icons").join("icon.png");
+    let icon_dst_dir = target_dir.join("icons");
+    if icon_src.exists() {
+        let _ = std::fs::create_dir_all(&icon_dst_dir);
+        copy_sdk_file(&icon_src, &icon_dst_dir.join("icon.png"));
+    }
+
+    println!("cargo:rerun-if-changed={}", manifest_src.display());
 }
 
 /// Resolve the target output directory from OUT_DIR.

@@ -37,6 +37,24 @@
   white-space: nowrap;
 }
 
+.diagnostic-overlay__encoding {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.encoder--hardware {
+  color: #66bb6a;
+}
+
+.encoder--software {
+  color: #ffc107;
+}
+
+.encoder--cpu {
+  color: #ef5350;
+}
+
 .diagnostic-overlay__toggle {
   position: absolute;
   top: 8px;

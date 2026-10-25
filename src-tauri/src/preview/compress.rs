@@ -1,21 +1,32 @@
-use image::codecs::jpeg::JpegEncoder;
-use image::{ImageBuffer, Rgb};
+use turbojpeg::{Compressor, Image, PixelFormat};
 
 /// Compress raw RGB pixel data to JPEG at the given quality (1-100).
+///
+/// Uses libjpeg-turbo via the `turbojpeg` crate for SIMD-accelerated encoding,
+/// typically 3-5x faster than the pure-Rust `image` crate encoder.
 pub fn compress_jpeg(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let img: ImageBuffer<Rgb<u8>, _> =
-        ImageBuffer::from_raw(width, height, data).expect("invalid buffer dimensions");
+    let mut compressor = Compressor::new().expect("failed to create turbojpeg compressor");
+    compressor
+        .set_quality(quality as i32)
+        .expect("failed to set JPEG quality");
 
-    let mut buf = Vec::new();
-    let encoder = JpegEncoder::new_with_quality(&mut buf, quality);
-    img.write_with_encoder(encoder)
-        .expect("JPEG encoding failed");
-    buf
+    let image = Image {
+        pixels: data,
+        width: width as usize,
+        pitch: (width * 3) as usize,
+        height: height as usize,
+        format: PixelFormat::RGB,
+    };
+
+    compressor
+        .compress_to_vec(image)
+        .expect("JPEG encoding failed")
 }
 
 /// Compress and downscale raw RGB data for sidebar thumbnails.
 ///
-/// Uses `fast_image_resize` for SIMD-accelerated resizing, then encodes to JPEG.
+/// Uses `fast_image_resize` for SIMD-accelerated resizing, then encodes to JPEG
+/// via turbojpeg.
 pub fn compress_thumbnail(
     data: &[u8],
     width: u32,
@@ -45,45 +56,22 @@ pub fn compress_thumbnail(
 
 /// Compress a JPEG image into a thumbnail by decoding, downscaling, and re-encoding.
 ///
-/// Takes existing JPEG bytes, decodes to RGB, downscales to `thumb_width x thumb_height`,
+/// Decodes the source JPEG via turbojpeg, downscales to `thumb_width x thumb_height`
 /// and re-encodes at quality 70. Used for Canon cameras that deliver native JPEG frames.
 pub fn compress_thumbnail_from_jpeg(
     jpeg_data: &[u8],
     thumb_width: u32,
     thumb_height: u32,
 ) -> Result<Vec<u8>, String> {
-    use fast_image_resize as fr;
-    use fr::images::Image;
-    use image::ImageReader;
-    use std::io::Cursor;
-
-    // Decode JPEG to RGB
-    let img = ImageReader::new(Cursor::new(jpeg_data))
-        .with_guessed_format()
-        .map_err(|e| format!("failed to read JPEG: {e}"))?
-        .decode()
-        .map_err(|e| format!("failed to decode JPEG: {e}"))?
-        .into_rgb8();
-
-    let (src_w, src_h) = img.dimensions();
-    let src_data = img.into_raw();
-
-    // Create source image for resizer
-    let src_image = Image::from_vec_u8(src_w, src_h, src_data, fr::PixelType::U8x3)
-        .map_err(|e| format!("failed to create source image: {e}"))?;
-
-    // Create destination image
-    let mut dst_image = Image::new(thumb_width, thumb_height, fr::PixelType::U8x3);
-
-    // Resize
-    let mut resizer = fr::Resizer::new();
-    resizer
-        .resize(&src_image, &mut dst_image, None)
-        .map_err(|e| format!("failed to resize: {e}"))?;
-
-    // Encode the resized image as JPEG
-    let resized_data = dst_image.into_vec();
-    Ok(compress_jpeg(&resized_data, thumb_width, thumb_height, 70))
+    let image = turbojpeg::decompress(jpeg_data, PixelFormat::RGB)
+        .map_err(|e| format!("failed to decode JPEG: {e}"))?;
+    Ok(compress_thumbnail(
+        &image.pixels,
+        image.width as u32,
+        image.height as u32,
+        thumb_width,
+        thumb_height,
+    ))
 }
 
 #[cfg(test)]
@@ -156,23 +144,23 @@ mod tests {
         );
     }
 
-    /// Create a valid JPEG from a synthetic RGB image for testing.
-    fn make_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+    /// Create a valid JPEG from synthetic RGB data for testing.
+    fn make_test_jpeg(width: u32, height: u32, quality: u8) -> Vec<u8> {
         let rgb = make_test_rgb(width, height);
-        compress_jpeg(&rgb, width, height, 85)
+        compress_jpeg(&rgb, width, height, quality)
     }
 
     #[test]
     fn compress_thumbnail_from_jpeg_produces_valid_jpeg() {
-        let jpeg = make_test_jpeg(640, 480);
+        let jpeg = make_test_jpeg(640, 480, 85);
         let thumb = compress_thumbnail_from_jpeg(&jpeg, 160, 120).unwrap();
-        assert_eq!(thumb[0], 0xFF, "missing JPEG SOI marker");
-        assert_eq!(thumb[1], 0xD8, "missing JPEG SOI marker");
+        assert_eq!(thumb[0], 0xFF);
+        assert_eq!(thumb[1], 0xD8);
     }
 
     #[test]
     fn compress_thumbnail_from_jpeg_output_under_10kb() {
-        let jpeg = make_test_jpeg(1920, 1080);
+        let jpeg = make_test_jpeg(1920, 1080, 85);
         let thumb = compress_thumbnail_from_jpeg(&jpeg, 160, 120).unwrap();
         assert!(
             thumb.len() < 10_000,
@@ -183,8 +171,25 @@ mod tests {
 
     #[test]
     fn compress_thumbnail_from_jpeg_invalid_input_returns_error() {
-        let garbage = vec![0x00, 0x01, 0x02, 0x03];
-        let result = compress_thumbnail_from_jpeg(&garbage, 160, 120);
+        let result = compress_thumbnail_from_jpeg(&[0x00, 0x01, 0x02], 160, 120);
         assert!(result.is_err(), "expected error for invalid JPEG input");
+    }
+
+    #[test]
+    fn compress_jpeg_640x480_under_10ms() {
+        let rgb = make_test_rgb(640, 480);
+        // The fastest run reflects the encoder; slower runs reflect scheduler
+        // contention from the rest of the parallel test suite.
+        let fastest_ms = (0..20)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                let _ = compress_jpeg(&rgb, 640, 480, 85);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            fastest_ms < 10.0,
+            "fastest encode time {fastest_ms:.1}ms exceeds 10ms for 640x480"
+        );
     }
 }
