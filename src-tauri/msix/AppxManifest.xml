@@ -40,7 +40,6 @@
     <Application
       Id="CamerasApp"
       Executable="cameras.exe"
-      EntryPoint="windows.none"
       uap10:TrustLevel="mediumIL"
       uap10:RuntimeBehavior="win32App">
 
@@ -58,7 +57,8 @@
             <com4:InProcessServer Path="vcam_source.dll">
               <com4:Class
                 Id="7B2E3A1F-4D5C-4E8B-9A6F-1C2D3E4F5A6B"
-                ThreadingModel="Both" />
+                ThreadingModel="Both"
+                Virtualization="disabled" />
             </com4:InProcessServer>
           </com4:ComServer>
         </com4:Extension>
