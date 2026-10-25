@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePreview } from './usePreview.ts'
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -93,8 +93,8 @@ describe('usePreview', () => {
     })
 
     const rafCallbacks: FrameRequestCallback[] = []
-    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
-      rafCallbacks.push(cb)
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     })
 
@@ -131,8 +131,8 @@ describe('usePreview', () => {
       .mockReturnValueOnce('blob:http://localhost/frame-2')
 
     const rafCallbacks: FrameRequestCallback[] = []
-    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
-      rafCallbacks.push(cb)
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     })
 
@@ -192,8 +192,8 @@ describe('usePreview', () => {
     type PreviewErrorPayload = { deviceId: string; error: string }
     type EventHandler = (event: { event: string; id: number; payload: PreviewErrorPayload }) => void
     let errorCallback: EventHandler | null = null
-    mockListen.mockImplementation(async (_event, cb) => {
-      errorCallback = cb as unknown as EventHandler
+    mockListen.mockImplementation(async (_event, callback) => {
+      errorCallback = callback as unknown as EventHandler
       return mockUnlisten
     })
 
@@ -221,8 +221,8 @@ describe('usePreview', () => {
     type PreviewErrorPayload = { deviceId: string; error: string }
     type EventHandler = (event: { event: string; id: number; payload: PreviewErrorPayload }) => void
     let errorCallback: EventHandler | null = null
-    mockListen.mockImplementation(async (_event, cb) => {
-      errorCallback = cb as unknown as EventHandler
+    mockListen.mockImplementation(async (_event, callback) => {
+      errorCallback = callback as unknown as EventHandler
       return mockUnlisten
     })
 
@@ -270,8 +270,8 @@ describe('usePreview', () => {
     })
 
     const rafCallbacks: FrameRequestCallback[] = []
-    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
-      rafCallbacks.push(cb)
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     })
 
@@ -285,8 +285,8 @@ describe('usePreview', () => {
     now.mockReturnValue(startTime + 4900)
     for (let i = 0; i < 200; i++) {
       await act(async () => {
-        const cb = rafCallbacks[rafCallbacks.length - 1]
-        if (cb) await cb(performance.now())
+        const callback = rafCallbacks[rafCallbacks.length - 1]
+        if (callback) await callback(performance.now())
       })
     }
 
@@ -316,8 +316,8 @@ describe('usePreview', () => {
     })
 
     const rafCallbacks: FrameRequestCallback[] = []
-    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
-      rafCallbacks.push(cb)
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     })
 
@@ -333,8 +333,8 @@ describe('usePreview', () => {
     // Trigger 150 consecutive failures (MAX_CONSECUTIVE_FAILURES)
     for (let i = 0; i < 150; i++) {
       await act(async () => {
-        const cb = rafCallbacks[rafCallbacks.length - 1]
-        if (cb) await cb(performance.now())
+        const callback = rafCallbacks[rafCallbacks.length - 1]
+        if (callback) await callback(performance.now())
       })
     }
 
@@ -364,8 +364,8 @@ describe('usePreview', () => {
     })
 
     const rafCallbacks: FrameRequestCallback[] = []
-    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
-      rafCallbacks.push(cb)
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     })
 
@@ -381,8 +381,8 @@ describe('usePreview', () => {
     // 149 failures — should not trigger error yet
     for (let i = 0; i < 149; i++) {
       await act(async () => {
-        const cb = rafCallbacks[rafCallbacks.length - 1]
-        if (cb) await cb(performance.now())
+        const callback = rafCallbacks[rafCallbacks.length - 1]
+        if (callback) await callback(performance.now())
       })
     }
 
@@ -391,8 +391,8 @@ describe('usePreview', () => {
 
     // 150th call succeeds — counter resets
     await act(async () => {
-      const cb = rafCallbacks[rafCallbacks.length - 1]
-      if (cb) await cb(performance.now())
+      const callback = rafCallbacks[rafCallbacks.length - 1]
+      if (callback) await callback(performance.now())
     })
 
     expect(result.current.error).toBeNull()
@@ -456,8 +456,8 @@ describe('usePreview', () => {
     const rafCallbacks: FrameRequestCallback[] = []
     const originalRaf = globalThis.requestAnimationFrame
     const originalCaf = globalThis.cancelAnimationFrame
-    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
-      rafCallbacks.push(cb)
+    globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      rafCallbacks.push(callback)
       return rafCallbacks.length
     }
     globalThis.cancelAnimationFrame = () => {}
@@ -473,8 +473,8 @@ describe('usePreview', () => {
 
     // Fire camera A's rAF callback — this kicks off get_frame which will hang.
     // We call the callback directly (not awaiting) to simulate the in-flight state.
-    const cameraARafIdx = rafCallbacks.length - 1
-    void rafCallbacks[cameraARafIdx](performance.now())
+    const cameraARafIndex = rafCallbacks.length - 1
+    void rafCallbacks[cameraARafIndex](performance.now())
 
     // While camera A's get_frame is in-flight, switch to camera B
     rerender({ deviceId: 'camera-b' })
@@ -484,8 +484,8 @@ describe('usePreview', () => {
 
     // Trigger rAF for camera B — resolves immediately with a frame
     await act(async () => {
-      const cameraBRafCb = rafCallbacks[rafCallbacks.length - 1]
-      await cameraBRafCb(performance.now())
+      const cameraBRafCallback = rafCallbacks[rafCallbacks.length - 1]
+      await cameraBRafCallback(performance.now())
     })
 
     expect(result.current.frameSrc).toBe('blob:camera-b-frame')

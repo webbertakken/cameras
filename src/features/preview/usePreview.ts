@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useToastStore } from '../notifications/useToast'
 
 interface UsePreviewResult {
@@ -28,12 +28,12 @@ const STARTUP_GRACE_MS = 5_000
  * `start_preview` or `stop_preview` IPC commands.
  */
 export function usePreview(deviceId: string | null): UsePreviewResult {
-  const [frameSrc, setFrameSrc] = useState<string | null>(null)
+  const [frameSource, setFrameSource] = useState<string | null>(null)
   const [isActive, setIsActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const runningRef = useRef(false)
   const rafIdRef = useRef<number | null>(null)
-  const prevBlobUrlRef = useRef<string | null>(null)
+  const previousBlobUrlRef = useRef<string | null>(null)
   const failureCountRef = useRef(0)
   const startTimeRef = useRef(0)
   /** Incremented on each start() call so stale fetch loops self-terminate. */
@@ -49,12 +49,12 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
 
   const stop = useCallback(() => {
     cancelLoop()
-    if (prevBlobUrlRef.current) {
-      URL.revokeObjectURL(prevBlobUrlRef.current)
-      prevBlobUrlRef.current = null
+    if (previousBlobUrlRef.current) {
+      URL.revokeObjectURL(previousBlobUrlRef.current)
+      previousBlobUrlRef.current = null
     }
     setIsActive(false)
-    setFrameSrc(null)
+    setFrameSource(null)
   }, [cancelLoop])
 
   const start = useCallback(() => {
@@ -62,9 +62,9 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
 
     // Cancel any existing loop before starting a new one
     cancelLoop()
-    if (prevBlobUrlRef.current) {
-      URL.revokeObjectURL(prevBlobUrlRef.current)
-      prevBlobUrlRef.current = null
+    if (previousBlobUrlRef.current) {
+      URL.revokeObjectURL(previousBlobUrlRef.current)
+      previousBlobUrlRef.current = null
     }
     setError(null)
 
@@ -87,11 +87,11 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
         const blob = new Blob([bytes], { type: 'image/jpeg' })
         const url = URL.createObjectURL(blob)
-        if (prevBlobUrlRef.current) {
-          URL.revokeObjectURL(prevBlobUrlRef.current)
+        if (previousBlobUrlRef.current) {
+          URL.revokeObjectURL(previousBlobUrlRef.current)
         }
-        prevBlobUrlRef.current = url
-        setFrameSrc(url)
+        previousBlobUrlRef.current = url
+        setFrameSource(url)
       } catch {
         if (gen !== generationRef.current) return
         const elapsed = Date.now() - startTimeRef.current
@@ -128,7 +128,7 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
       (event) => {
         if (event.payload.deviceId === deviceId) {
           setError(event.payload.error)
-          setFrameSrc(null)
+          setFrameSource(null)
           useToastStore.getState().addToast(event.payload.error, 'error')
         }
       },
@@ -143,12 +143,12 @@ export function usePreview(deviceId: string | null): UsePreviewResult {
   useEffect(() => {
     return () => {
       cancelLoop()
-      if (prevBlobUrlRef.current) {
-        URL.revokeObjectURL(prevBlobUrlRef.current)
-        prevBlobUrlRef.current = null
+      if (previousBlobUrlRef.current) {
+        URL.revokeObjectURL(previousBlobUrlRef.current)
+        previousBlobUrlRef.current = null
       }
     }
   }, [deviceId, cancelLoop])
 
-  return { frameSrc, isActive, error, start, stop }
+  return { frameSrc: frameSource, isActive, error, start, stop }
 }

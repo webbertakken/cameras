@@ -2,10 +2,10 @@ import { useCallback, useEffect, useReducer } from 'react'
 import type { ControlDescriptor, ControlGroup, ResetResult } from '../../types/camera'
 import { useToastStore } from '../notifications/useToast'
 import { AccordionSection } from './AccordionSection'
-import { ControlRenderer } from './ControlRenderer'
-import './ControlsPanel.css'
-import { ResetAllButton } from './ResetAllButton'
 import { getCameraControls, resetCameraControl, setCameraControl } from './api'
+import './ControlsPanel.css'
+import { ControlRenderer } from './ControlRenderer'
+import { ResetAllButton } from './ResetAllButton'
 
 /** Display labels for control groups. */
 const GROUP_LABELS: Record<ControlGroup, string> = {

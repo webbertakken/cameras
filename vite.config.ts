@@ -1,6 +1,6 @@
-import { resolve } from 'path'
-import { playwright } from '@vitest/browser-playwright'
 import react from '@vitejs/plugin-react'
+import { playwright } from '@vitest/browser-playwright'
+import { resolve } from 'path'
 import { defineConfig } from 'vitest/config'
 
 const host = process.env.TAURI_DEV_HOST

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDiagnostics } from './useDiagnostics.ts'
 
 vi.mock('@tauri-apps/api/core', () => ({

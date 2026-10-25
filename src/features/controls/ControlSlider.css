@@ -128,3 +128,17 @@
   color: var(--colour-error);
   margin-top: var(--space-1);
 }
+
+/* Ensure native <button> styles don't override our custom slider value display */
+.control-slider__value {
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+.control-slider__value:disabled {
+  cursor: not-allowed;
+}

@@ -29,7 +29,7 @@ export function AccordionSection({
           className="accordion-section__trigger"
           aria-expanded={expanded}
           aria-controls={regionId}
-          onClick={() => setExpanded((prev) => !prev)}
+          onClick={() => setExpanded((previous) => !previous)}
         >
           <span className="accordion-section__label">{label}</span>
           <span

@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { CameraSidebar, listCameras, useCameraStore, useHotplug } from './features/camera-sidebar'
 import { ControlsPanel } from './features/controls/ControlsPanel'
 import { ToastContainer } from './features/notifications'
-import { PreviewCanvas } from './features/preview/PreviewCanvas'
 import { DiagnosticOverlay } from './features/preview/DiagnosticOverlay'
-import { usePreview } from './features/preview/usePreview'
+import { PreviewCanvas } from './features/preview/PreviewCanvas'
 import { useDiagnostics } from './features/preview/useDiagnostics'
+import { usePreview } from './features/preview/usePreview'
 import './App.css'
 
 function App() {

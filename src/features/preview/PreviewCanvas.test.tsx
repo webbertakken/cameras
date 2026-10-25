@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
 import { PreviewCanvas } from './PreviewCanvas.tsx'
 
 describe('PreviewCanvas', () => {
@@ -19,22 +19,22 @@ describe('PreviewCanvas', () => {
   })
 
   it('displays an image when given a frame src', () => {
-    const src = 'blob:http://localhost/fake-blob'
-    render(<PreviewCanvas frameSrc={src} isLoading={false} />)
+    const source = 'blob:http://localhost/fake-blob'
+    render(<PreviewCanvas frameSrc={source} isLoading={false} />)
     const img = screen.getByRole('img') as HTMLImageElement
     expect(img.tagName).toBe('IMG')
-    expect(img.src).toBe(src)
+    expect(img.src).toBe(source)
   })
 
   it('has correct alt text for accessibility', () => {
-    const src = 'blob:http://localhost/fake-blob'
-    render(<PreviewCanvas frameSrc={src} isLoading={false} />)
+    const source = 'blob:http://localhost/fake-blob'
+    render(<PreviewCanvas frameSrc={source} isLoading={false} />)
     expect(screen.getByAltText('Camera preview')).toBeInTheDocument()
   })
 
   it('renders image with preview-canvas__image class', () => {
-    const src = 'blob:http://localhost/fake-blob'
-    render(<PreviewCanvas frameSrc={src} isLoading={false} />)
+    const source = 'blob:http://localhost/fake-blob'
+    render(<PreviewCanvas frameSrc={source} isLoading={false} />)
     const img = screen.getByAltText('Camera preview')
     expect(img.className).toContain('preview-canvas__image')
   })

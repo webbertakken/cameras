@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useEffect, useRef, useState } from 'react'
 
 export interface DiagnosticSnapshot {
   fps: number
@@ -55,7 +55,7 @@ export function useDiagnostics(
       const diagnostics = diagResult.value
       const encoding = encResult.status === 'fulfilled' ? encResult.value : null
 
-      setState((prev) => ({ ...prev, snapshot: { diagnostics, encoding } }))
+      setState((previous) => ({ ...previous, snapshot: { diagnostics, encoding } }))
     }, 1000)
 
     return () => {

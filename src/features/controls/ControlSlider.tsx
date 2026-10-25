@@ -93,18 +93,15 @@ export function ControlSlider({
             onKeyDown={handleEditKeyDown}
           />
         ) : (
-          <span
+          <button
+            type="button"
             className="control-slider__value"
             onClick={startEditing}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') startEditing()
-            }}
-            role="button"
-            tabIndex={disabled ? -1 : 0}
+            disabled={disabled}
             aria-label={`Edit ${descriptor.name} value`}
           >
             {value}
-          </span>
+          </button>
         )}
         <button
           type="button"

@@ -1,25 +1,5 @@
 use turbojpeg::{Compressor, Image, PixelFormat};
 
-/// Compress a JPEG image into a smaller thumbnail JPEG.
-///
-/// Decodes the source JPEG via turbojpeg, resizes to exact target dimensions
-/// using fast_image_resize, and re-encodes. Used for Canon cameras where the
-/// source is already JPEG (no raw RGB buffer).
-pub fn compress_thumbnail_from_jpeg(
-    jpeg_data: &[u8],
-    thumb_width: u32,
-    thumb_height: u32,
-) -> Option<Vec<u8>> {
-    let image = turbojpeg::decompress(jpeg_data, PixelFormat::RGB).ok()?;
-    Some(compress_thumbnail(
-        &image.pixels,
-        image.width as u32,
-        image.height as u32,
-        thumb_width,
-        thumb_height,
-    ))
-}
-
 /// Compress raw RGB pixel data to JPEG at the given quality (1-100).
 ///
 /// Uses libjpeg-turbo via the `turbojpeg` crate for SIMD-accelerated encoding,
@@ -72,6 +52,26 @@ pub fn compress_thumbnail(
     // Encode the resized image as JPEG
     let resized_data = dst_image.into_vec();
     compress_jpeg(&resized_data, thumb_width, thumb_height, 70)
+}
+
+/// Compress a JPEG image into a thumbnail by decoding, downscaling, and re-encoding.
+///
+/// Decodes the source JPEG via turbojpeg, downscales to `thumb_width x thumb_height`
+/// and re-encodes at quality 70. Used for Canon cameras that deliver native JPEG frames.
+pub fn compress_thumbnail_from_jpeg(
+    jpeg_data: &[u8],
+    thumb_width: u32,
+    thumb_height: u32,
+) -> Result<Vec<u8>, String> {
+    let image = turbojpeg::decompress(jpeg_data, PixelFormat::RGB)
+        .map_err(|e| format!("failed to decode JPEG: {e}"))?;
+    Ok(compress_thumbnail(
+        &image.pixels,
+        image.width as u32,
+        image.height as u32,
+        thumb_width,
+        thumb_height,
+    ))
 }
 
 #[cfg(test)]
@@ -170,9 +170,9 @@ mod tests {
     }
 
     #[test]
-    fn compress_thumbnail_from_jpeg_returns_none_for_invalid_data() {
+    fn compress_thumbnail_from_jpeg_invalid_input_returns_error() {
         let result = compress_thumbnail_from_jpeg(&[0x00, 0x01, 0x02], 160, 120);
-        assert!(result.is_none(), "invalid JPEG data should return None");
+        assert!(result.is_err(), "expected error for invalid JPEG input");
     }
 
     #[test]

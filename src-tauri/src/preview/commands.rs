@@ -512,8 +512,7 @@ pub async fn get_thumbnail(
             ))
         }
         ThumbnailSource::Jpeg(jpeg) => {
-            let thumb = compress::compress_thumbnail_from_jpeg(&jpeg.jpeg_bytes, 160, 120)
-                .ok_or_else(|| "failed to create thumbnail from JPEG".to_string())?;
+            let thumb = compress::compress_thumbnail_from_jpeg(&jpeg.jpeg_bytes, 160, 120)?;
             Ok(base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
                 &thumb,
@@ -964,35 +963,84 @@ mod tests {
     }
 
     #[test]
-    fn canon_thumbnail_uses_jpeg_buffer() {
+    fn canon_thumbnail_uses_jpeg_fallback() {
         use crate::camera::canon::api::CameraHandle;
         use crate::camera::canon::mock::MockEdsSdk;
         use crate::preview::capture::CanonCaptureSession;
 
+        // Create a valid JPEG for the mock to deliver
+        let rgb = vec![128u8; 64 * 64 * 3];
+        let test_jpeg = compress::compress_jpeg(&rgb, 64, 64, 85);
+
         let mock = Arc::new(
             MockEdsSdk::new()
                 .with_cameras(1)
-                .with_live_view_frame(vec![0xFF, 0xD8, 0xFF, 0xD9]),
+                .with_live_view_frame(test_jpeg.clone()),
         );
         let camera = CameraHandle(0);
-
         let session = CanonCaptureSession::new("canon:MOCK0001".to_string(), mock, camera).unwrap();
+
+        // Wait for at least one frame
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session.jpeg_buffer().latest().is_none() {
+            if std::time::Instant::now() > deadline {
+                panic!("Canon mock did not deliver a frame within 5s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
         let preview = PreviewSession::Canon(session);
 
-        // Canon session has no raw buffer but has a JPEG buffer
+        // Canon has no raw buffer — buffer() returns None
         assert!(preview.buffer().is_none());
-        assert!(preview.jpeg_buffer().is_some());
 
-        // Wait for frames to arrive
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        // The get_thumbnail logic should fall through to the jpeg_buffer path.
-        // We verify that jpeg_buffer has frames available for thumbnail generation.
+        // But jpeg_buffer() should have data
         let jpeg_buf = preview.jpeg_buffer().unwrap();
+        let jpeg_frame = jpeg_buf.latest().unwrap();
+
+        // Compress via the new JPEG-based thumbnail path
+        let thumb =
+            compress::compress_thumbnail_from_jpeg(&jpeg_frame.jpeg_bytes, 160, 120).unwrap();
+
+        // Should produce a valid, small JPEG thumbnail
+        assert_eq!(thumb[0], 0xFF, "missing JPEG SOI");
+        assert_eq!(thumb[1], 0xD8, "missing JPEG SOI");
         assert!(
-            jpeg_buf.latest().is_some(),
-            "Canon JPEG buffer should have frames for thumbnail generation"
+            thumb.len() < 10_000,
+            "thumbnail {} bytes exceeds 10KB",
+            thumb.len()
         );
+
+        // Should be base64-encodable
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &thumb);
+        assert!(!b64.is_empty());
+    }
+
+    #[test]
+    fn directshow_thumbnail_unchanged() {
+        let state = make_preview_state();
+        let frame = make_rgb_frame(640, 480);
+        let session = make_ds_session("ds-thumb", 640, 480);
+        session.buffer().push(frame);
+        state
+            .sessions
+            .lock()
+            .insert("ds-thumb".to_string(), PreviewSession::DirectShow(session));
+
+        // DirectShow path: buffer() returns Some, use raw RGB compress_thumbnail
+        let sessions = state.sessions.lock();
+        let session = sessions.get("ds-thumb").unwrap();
+
+        let buf = session.buffer().unwrap();
+        let latest = buf.latest().unwrap();
+        let thumb =
+            compress::compress_thumbnail(&latest.data, latest.width, latest.height, 160, 120);
+
+        assert_eq!(thumb[0], 0xFF, "missing JPEG SOI");
+        assert_eq!(thumb[1], 0xD8, "missing JPEG SOI");
+
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &thumb);
+        assert!(!b64.is_empty());
     }
 
     /// Mock sink for testing virtual camera auto-stop.

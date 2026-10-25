@@ -24,13 +24,13 @@ function CameraEntryWithThumbnail({
   isVirtualCameraActive: boolean
   onToggleVirtualCamera: (id: string) => void
 }) {
-  const thumbnailSrc = useThumbnail(device.id)
+  const thumbnailSource = useThumbnail(device.id)
   return (
     <CameraEntry
       device={device}
       isSelected={isSelected}
       onSelect={onSelect}
-      thumbnailSrc={thumbnailSrc}
+      thumbnailSrc={thumbnailSource}
       hasPreview={hasPreview}
       isVirtualCameraActive={isVirtualCameraActive}
       onToggleVirtualCamera={onToggleVirtualCamera}

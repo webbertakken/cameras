@@ -3,12 +3,12 @@
 ## 1. Project scaffold
 
 - [x] 1.1 Initialise Tauri v2 project with React + TypeScript frontend (Vite)
-- [x] 1.2 Configure Volta for Node/Yarn versions, add `.npmrc` and engine constraints
+- [x] 1.2 Configure mise for Node version (`mise.toml`) and Corepack-pinned Yarn (`packageManager`), add `.npmrc` and engine constraints
 - [x] 1.3 Set up ESLint, Prettier, and Rust clippy/rustfmt configurations
 - [x] 1.4 Add pre-commit hooks (lint, format, typecheck) via Husky + lint-staged
 - [x] 1.5 Set up CI workflows (GitHub Actions) — modelled on webbertakken/snap:
   - [x] 1.5.1 Create `checks.yml` — runs on push to main + PRs: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo check`, `cargo test`, `yarn lint`, `yarn typecheck`, `yarn test`
-  - [x] 1.5.2 Create `build.yml` — cross-platform build matrix (5 targets: Windows x64, Linux x64, Linux ARM, macOS ARM, macOS Intel) using `tauri build`. Steps: checkout, `dtolnay/rust-toolchain@stable`, `actions/setup-node` (Volta-pinned), `swatinem/rust-cache@v2`, install platform deps (Linux: libwebkit2gtk-4.1-dev, libjavascriptcoregtk-4.1-dev, libsoup-3.0-dev, libayatana-appindicator3-dev, libxcb, libgtk-3-dev, etc.), `yarn install`, `yarn tauri build`
+  - [x] 1.5.2 Create `build.yml` — cross-platform build matrix (5 targets: Windows x64, Linux x64, Linux ARM, macOS ARM, macOS Intel) using `tauri build`. Steps: checkout, `dtolnay/rust-toolchain@stable`, `actions/setup-node` (Node version from `mise.toml`), `swatinem/rust-cache@v2`, install platform deps (Linux: libwebkit2gtk-4.1-dev, libjavascriptcoregtk-4.1-dev, libsoup-3.0-dev, libayatana-appindicator3-dev, libxcb, libgtk-3-dev, etc.), `yarn install`, `yarn tauri build`
   - [x] 1.5.3 Create `commit-lint.yml` — validate PR titles using `amannn/action-semantic-pull-request@v5` with conventional commit types (feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert)
   - [x] 1.5.4 Create `lint-workflows.yml` — validate workflow files on PRs touching `.github/workflows/**` using `reviewdog/action-actionlint@v1`
   - [x] 1.5.5 Create `release-please.yml` — automated release PRs using `googleapis/release-please-action@v4` with config for both Cargo.toml and package.json version bumping, conventional commit changelog generation, `RELEASE_TOKEN` secret

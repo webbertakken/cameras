@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { DiagnosticOverlay } from './DiagnosticOverlay.tsx'
 import type { CombinedDiagnostics } from './useDiagnostics.ts'
 
