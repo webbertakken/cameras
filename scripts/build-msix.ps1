@@ -101,7 +101,9 @@ if (Test-Path $OutputMsix) {
     Remove-Item $OutputMsix -Force
 }
 
-& $makeAppx.FullName pack /d $StagingDir /p $OutputMsix /o
+# /nv: a sparse package references cameras.exe outside the package, so file
+# references cannot be validated at pack time (schema validation still runs).
+& $makeAppx.FullName pack /d $StagingDir /p $OutputMsix /o /nv
 if ($LASTEXITCODE -ne 0) {
     Write-Error "MakeAppx.exe pack failed with exit code $LASTEXITCODE"
 }
