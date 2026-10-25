@@ -166,11 +166,17 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
-      - name: Build vcam-source DLL (Windows)
+      - name: Verify installer bundles the virtual camera (Windows)
         if: matrix.target == 'windows-x64'
         shell: bash
-        working-directory: src-tauri
-        run: cargo build -p vcam-source --release
+        run: |
+          set -euo pipefail
+          installer=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe)
+          listing=$(7z l "$installer")
+          for file in vcam_source.dll AppxManifest.xml 'icons\icon.png'; do
+            grep -qF "$file" <<<"$listing" || { echo "::error::$installer is missing $file"; exit 1; }
+          done
+          echo "$installer bundles vcam_source.dll, AppxManifest.xml and icons/icon.png"
 
       - name: Build MSIX sparse package (Windows)
         if: matrix.target == 'windows-x64'
