@@ -4,7 +4,7 @@
   "version": "0.8.0",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.22.2"
   },
   "scripts": {
     "dev": "node scripts/ensure-husky.mjs && yarn build:vcam && tauri dev --features canon",
@@ -45,7 +45,7 @@
     "eslint-plugin-unicorn": "^64.0.0",
     "husky": "^9.1.7",
     "jsdom": "^30.0.0",
-    "lint-staged": "^16.2.7",
+    "lint-staged": "^17.0.0",
     "oxfmt": "^0.47.0",
     "oxlint": "^1.62.0",
     "playwright": "^1.58.2",
