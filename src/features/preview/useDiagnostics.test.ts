@@ -48,9 +48,9 @@ describe('useDiagnostics', () => {
 
   it('polls both diagnostics and encoding stats at 1000ms interval', async () => {
     vi.useFakeTimers()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
-      if (cmd === 'get_encoding_stats') return Promise.resolve(mockEncoding)
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
+      if (command === 'get_encoding_stats') return Promise.resolve(mockEncoding)
       return Promise.resolve(undefined)
     })
 
@@ -73,9 +73,9 @@ describe('useDiagnostics', () => {
 
   it('returns encoding as null when get_encoding_stats fails', async () => {
     vi.useFakeTimers()
-    mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
-      if (cmd === 'get_encoding_stats') return Promise.reject(new Error('Not available'))
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_diagnostics') return Promise.resolve(mockDiagnostics)
+      if (command === 'get_encoding_stats') return Promise.reject(new Error('Not available'))
       return Promise.resolve(undefined)
     })
 

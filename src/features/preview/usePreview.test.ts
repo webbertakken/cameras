@@ -87,8 +87,8 @@ describe('usePreview', () => {
 
   it('creates blob URL from base64 frame', async () => {
     const fakeBase64 = btoa(String.fromCharCode(0xff, 0xd8, 0x01, 0x02))
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_frame') return fakeBase64
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_frame') return fakeBase64
       return undefined
     })
 
@@ -121,8 +121,8 @@ describe('usePreview', () => {
 
   it('revokes previous blob URL when creating new one', async () => {
     let frameCount = 0
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_frame') return btoa(String.fromCharCode(0xff, 0xd8, ++frameCount))
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_frame') return btoa(String.fromCharCode(0xff, 0xd8, ++frameCount))
       return undefined
     })
 
@@ -264,8 +264,8 @@ describe('usePreview', () => {
     const startTime = 1000
     now.mockReturnValue(startTime)
 
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_frame') throw new Error('no frame available')
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_frame') throw new Error('no frame available')
       return undefined
     })
 
@@ -307,8 +307,8 @@ describe('usePreview', () => {
     now.mockReturnValue(startTime)
 
     let callCount = 0
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_frame') {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_frame') {
         callCount++
         throw new Error('no frame available')
       }
@@ -351,8 +351,8 @@ describe('usePreview', () => {
     now.mockReturnValue(startTime)
 
     let callCount = 0
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_frame') {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_frame') {
         callCount++
         // Fail for 149 calls, then succeed, then fail again
         if (callCount <= 149 || callCount === 151) {
@@ -433,8 +433,8 @@ describe('usePreview', () => {
     const cameraABase64 = btoa(String.fromCharCode(0xff, 0xd8, 0xaa))
     const cameraBBase64 = btoa(String.fromCharCode(0xff, 0xd8, 0xbb))
 
-    mockInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === 'get_frame') {
+    mockInvoke.mockImplementation(async (command, args) => {
+      if (command === 'get_frame') {
         const id = (args as Record<string, unknown>)?.deviceId as string
 
         if (id === 'camera-a' && !resolveOldFrame) {
