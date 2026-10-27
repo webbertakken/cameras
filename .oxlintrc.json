@@ -48,7 +48,7 @@
     "unicorn/no-array-for-each": "off",
     "unicorn/prefer-node-protocol": "off",
 
-    "unicorn-x/prevent-abbreviations": [
+    "unicorn-x/name-replacements": [
       "error",
       {
         "replacements": {
