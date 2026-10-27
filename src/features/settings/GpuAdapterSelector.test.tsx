@@ -39,9 +39,9 @@ describe('GpuAdapterSelector', () => {
   })
 
   it('renders a dropdown with adapters after loading', async () => {
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return [vulkanAdapter, dx12Adapter]
-      if (cmd === 'get_active_gpu') return vulkanAdapter
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return [vulkanAdapter, dx12Adapter]
+      if (command === 'get_active_gpu') return vulkanAdapter
       return null
     })
 
@@ -63,9 +63,9 @@ describe('GpuAdapterSelector', () => {
   })
 
   it('shows CPU only selected when no active GPU', async () => {
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return [vulkanAdapter]
-      if (cmd === 'get_active_gpu') return null
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return [vulkanAdapter]
+      if (command === 'get_active_gpu') return null
       return null
     })
 
@@ -81,10 +81,10 @@ describe('GpuAdapterSelector', () => {
   it('handles adapter switch', async () => {
     const user = userEvent.setup()
 
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return [vulkanAdapter]
-      if (cmd === 'get_active_gpu') return null
-      if (cmd === 'set_gpu_adapter') return 'NVIDIA GeForce RTX 3080'
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return [vulkanAdapter]
+      if (command === 'get_active_gpu') return null
+      if (command === 'set_gpu_adapter') return 'NVIDIA GeForce RTX 3080'
       return null
     })
 
@@ -104,10 +104,10 @@ describe('GpuAdapterSelector', () => {
   it('handles switch to CPU only', async () => {
     const user = userEvent.setup()
 
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return [vulkanAdapter]
-      if (cmd === 'get_active_gpu') return vulkanAdapter
-      if (cmd === 'set_gpu_adapter') return null
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return [vulkanAdapter]
+      if (command === 'get_active_gpu') return vulkanAdapter
+      if (command === 'set_gpu_adapter') return null
       return null
     })
 
@@ -125,9 +125,9 @@ describe('GpuAdapterSelector', () => {
   })
 
   it('renders empty adapter list gracefully', async () => {
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return []
-      if (cmd === 'get_active_gpu') return null
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return []
+      if (command === 'get_active_gpu') return null
       return null
     })
 
@@ -144,9 +144,9 @@ describe('GpuAdapterSelector', () => {
   })
 
   it('has accessible label', async () => {
-    mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_gpu_adapters') return [vulkanAdapter]
-      if (cmd === 'get_active_gpu') return vulkanAdapter
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'list_gpu_adapters') return [vulkanAdapter]
+      if (command === 'get_active_gpu') return vulkanAdapter
       return null
     })
 
