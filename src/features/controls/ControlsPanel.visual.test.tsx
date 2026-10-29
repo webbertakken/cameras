@@ -69,7 +69,7 @@ const exposureControls: ControlDescriptor[] = [
 
 test('controls panel with accordion sections matches baseline', async () => {
   await renderVisual(
-    <section aria-label="Camera controls" role="region" className="controls-panel">
+    <section aria-label="Camera controls" className="controls-panel">
       <AccordionSection label="Image" sectionId="image" defaultExpanded>
         {imageControls.map((desc) => (
           <ControlRenderer

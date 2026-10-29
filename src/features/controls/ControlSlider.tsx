@@ -65,7 +65,6 @@ export function ControlSlider({
         <input
           type="range"
           className="control-slider__input"
-          role="slider"
           aria-label={descriptor.name}
           aria-labelledby={labelId}
           aria-valuemin={min}
@@ -81,7 +80,6 @@ export function ControlSlider({
         {isEditing ? (
           <input
             type="number"
-            role="spinbutton"
             className="control-slider__edit"
             value={editValue}
             min={min}
