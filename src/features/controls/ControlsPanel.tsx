@@ -201,7 +201,7 @@ export function ControlsPanel({ cameraId, cameraName }: ControlsPanelProps) {
   const expandAll = totalControls <= 3
 
   return (
-    <section aria-label="Camera controls" role="region" className="controls-panel">
+    <section aria-label="Camera controls" className="controls-panel">
       {GROUP_ORDER.filter((g) => groups.has(g)).map((group, index) => {
         const controls = groups.get(group) ?? []
         const allUnsupported = controls.every((c) => !c.supported)

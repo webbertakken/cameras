@@ -43,7 +43,7 @@ export function PreviewCanvas({ frameSrc, isLoading, error }: PreviewCanvasProps
 
   return (
     <div className="preview-canvas">
-      <img className="preview-canvas__image" src={frameSrc} alt="Camera preview" role="img" />
+      <img className="preview-canvas__image" src={frameSrc} alt="Camera preview" />
     </div>
   )
 }
