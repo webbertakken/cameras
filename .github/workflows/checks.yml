@@ -12,7 +12,7 @@ concurrency:
 jobs:
   frontend:
     name: Frontend checks
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -68,7 +68,7 @@ jobs:
 
   rust:
     name: Rust checks
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -153,7 +153,7 @@ jobs:
 
   visual:
     name: Visual regression
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
