@@ -142,21 +142,34 @@ jobs:
           case "$(yarn --version)" in 1.*) echo 'expected up-to-date yarn version'; exit 1 ;; esac
           yarn install --immutable
 
+      # release-please creates the release with its changelog before pushing the tag;
+      # passing its id makes tauri-action upload assets without rewriting the notes.
+      - name: Resolve release id
+        id: release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq .id)
+          echo "Uploading to release ${id} for ${GITHUB_REF_NAME}"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       - name: Build and upload (release)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
+          releaseId: ${{ steps.release.outputs.id }}
           args: ${{ matrix.args }}
 
       - name: Build (CI)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
