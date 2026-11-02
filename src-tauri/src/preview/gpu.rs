@@ -442,10 +442,10 @@ impl GpuContext {
             .ok()?;
 
         // Convert RGBA -> RGB by stripping the alpha channel
-        let (rgba_pixels, _) = mapped.as_chunks::<4>();
+        let rgba = &mapped[..];
         let mut rgb = Vec::with_capacity(pixel_count * 3);
-        for [r, g, b, _alpha] in rgba_pixels {
-            rgb.extend_from_slice(&[*r, *g, *b]);
+        for pixel in rgba.chunks_exact(4) {
+            rgb.extend_from_slice(&pixel[..3]);
         }
 
         drop(mapped);
