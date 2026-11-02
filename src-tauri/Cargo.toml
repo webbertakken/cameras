@@ -37,8 +37,8 @@ tauri-plugin-single-instance = "2"
 turbojpeg = { version = "1.3", default-features = false, features = ["cmake"] }
 vcam-shared = { path = "crates/vcam-shared" }
 fast_image_resize = "6"
-parking_lot = "0.12"
-base64 = "0.22"
+parking_lot = "0.13"
+base64 = "0.23"
 wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"

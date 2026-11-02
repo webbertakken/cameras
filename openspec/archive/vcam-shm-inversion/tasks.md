@@ -75,11 +75,11 @@ impl SharedMemoryOwner {
 ```toml
 [target.'cfg(windows)'.dependencies.windows]
 features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-    "Win32_System_Memory",
-    "Win32_Security",
-    "Win32_Security_Authorization",  # for ACL/ACE helpers
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_System_Memory",
+  "Win32_Security",
+  "Win32_Security_Authorization", # for ACL/ACE helpers
 ]
 ```
 
