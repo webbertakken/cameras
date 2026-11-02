@@ -37,7 +37,7 @@ ALL_PROMPTS.md
 .chainlink/
 
 # Vitest
-.vitest-attachments/
+.vitest/
 
 # Yarn
 .yarn/*

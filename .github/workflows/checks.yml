@@ -209,4 +209,4 @@ jobs:
           include-hidden-files: true
           path: |
             src/**/__screenshots__/**/*.png
-            .vitest-attachments/**/*.png
+            .vitest/attachments/**/*.png
