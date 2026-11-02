@@ -206,4 +206,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: visual-regression-diffs
-          path: src/**/__screenshots__/**/*.png
+          include-hidden-files: true
+          path: |
+            src/**/__screenshots__/**/*.png
+            .vitest-attachments/**/*.png
