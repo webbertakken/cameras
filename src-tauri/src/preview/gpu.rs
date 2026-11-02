@@ -194,9 +194,9 @@ impl GpuContext {
 
     /// Async initialisation — enumerate adapters, request device, compile pipelines.
     async fn new_async(adapter_index: Option<usize>) -> Option<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         let adapters: Vec<wgpu::Adapter> = instance.enumerate_adapters(wgpu::Backends::all()).await;
@@ -274,9 +274,9 @@ impl GpuContext {
 
     /// Async adapter enumeration.
     async fn enumerate_adapters_async() -> Vec<GpuAdapterInfo> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         let adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
@@ -436,15 +436,16 @@ impl GpuContext {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         receiver.recv().ok()?.ok()?;
-        let mapped = buffer_slice.get_mapped_range();
+        let mapped = buffer_slice
+            .get_mapped_range()
+            .inspect_err(|err| warn!("Failed to read mapped GPU staging buffer: {err:?}"))
+            .ok()?;
 
         // Convert RGBA -> RGB by stripping the alpha channel
         let rgba = &mapped[..];
         let mut rgb = Vec::with_capacity(pixel_count * 3);
         for pixel in rgba.chunks_exact(4) {
-            rgb.push(pixel[0]); // R
-            rgb.push(pixel[1]); // G
-            rgb.push(pixel[2]); // B
+            rgb.extend_from_slice(&pixel[..3]);
         }
 
         drop(mapped);
@@ -636,6 +637,21 @@ mod tests {
         assert_eq!(rgb[0], 255); // R
         assert_eq!(rgb[1], 0); // G
         assert_eq!(rgb[2], 0); // B
+    }
+
+    #[test]
+    fn gpu_bgr_conversion_matches_cpu_when_adapter_available() {
+        let Some(context) = GpuContext::new(None) else {
+            eprintln!("No GPU adapter available; GPU/CPU parity not exercised");
+            return;
+        };
+        // 2x2 BGR bottom-up with four distinct pixels
+        let bgr = vec![10u8, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+
+        let gpu_rgb = context.convert_bgr_to_rgb(&bgr, 2, 2);
+
+        let cpu_rgb = super::super::graph::convert_bgr_bottom_up_to_rgb(&bgr, 2, 2);
+        assert_eq!(gpu_rgb, Some(cpu_rgb));
     }
 
     #[test]

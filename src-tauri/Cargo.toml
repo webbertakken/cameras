@@ -39,7 +39,7 @@ vcam-shared = { path = "crates/vcam-shared" }
 fast_image_resize = "6"
 parking_lot = "0.13"
 base64 = "0.23"
-wgpu = "28"
+wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 
