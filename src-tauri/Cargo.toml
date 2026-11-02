@@ -41,7 +41,7 @@ parking_lot = "0.13"
 base64 = "0.23"
 wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
-pollster = "0.4"
+pollster = "1.0"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
