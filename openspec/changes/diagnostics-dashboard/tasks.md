@@ -9,7 +9,7 @@ OpenSpec: `openspec/changes/diagnostics-dashboard/`
 Modify `src/features/preview/useDiagnostics.ts` to:
 
 - Define `EncodingSnapshot` type: `{ encoderKind: string, framesEncoded:
-number, framesDropped: number, avgEncodeMs: number, lastEncodeMs: number }`
+  number, framesDropped: number, avgEncodeMs: number, lastEncodeMs: number }`
 - Define `CombinedDiagnostics` type combining `DiagnosticSnapshot` and
   optional `EncodingSnapshot`
 - In the polling interval, call both `get_diagnostics` and

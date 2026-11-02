@@ -405,11 +405,11 @@ Add `Win32_Storage_FileSystem` for `CreateFileW`, `DeleteFileW`,
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-    "Win32_System_Memory",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",  # NEW
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_System_Memory",
+  "Win32_Security",
+  "Win32_Storage_FileSystem", # NEW
 ]
 ```
 
