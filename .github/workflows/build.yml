@@ -103,20 +103,14 @@ jobs:
         run: echo "version=$(grep -E '^node\s*=' mise.toml | sed -E 's/.*"([^"]+)".*/\1/')" >>
           "$GITHUB_OUTPUT"
 
-      - name: Install package manager (from package.json)
-        if: runner.os != 'Windows'
-        run: |
-          corepack enable
-          corepack install
-
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.node.outputs.version }}
 
-      - name: Install package manager (Windows)
-        if: runner.os == 'Windows'
+      - name: Install package manager (from package.json)
         run: |
+          npm install --global corepack@0.36.0
           corepack enable
           corepack install
 
