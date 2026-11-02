@@ -174,14 +174,14 @@ needed:
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = [
-    # Existing features (keep all current ones)
-    "Win32_Media_MediaFoundation",
+  # Existing features (keep all current ones)
+  "Win32_Media_MediaFoundation",
 
-    # New features needed for MFCreateVirtualCamera
-    "Win32_Devices_Properties",        # DEVPKEY_* for AddProperty
-    "Win32_System_Threading",          # CreateEventW, WaitForSingleObject
-    "Win32_Storage_FileSystem",        # CreateFileMappingW (if not already available)
-    "Win32_Security",                  # SECURITY_ATTRIBUTES for shared memory
+  # New features needed for MFCreateVirtualCamera
+  "Win32_Devices_Properties", # DEVPKEY_* for AddProperty
+  "Win32_System_Threading", # CreateEventW, WaitForSingleObject
+  "Win32_Storage_FileSystem", # CreateFileMappingW (if not already available)
+  "Win32_Security", # SECURITY_ATTRIBUTES for shared memory
 ]
 ```
 
