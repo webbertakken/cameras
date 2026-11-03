@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.1](https://github.com/webbertakken/cameras/compare/v0.8.0...v0.8.1) (2026-11-03)
+
+
+### Bug fixes
+
+* **deps:** bump tar to 7.5.22 for security ([#70](https://github.com/webbertakken/cameras/issues/70)) ([87a69a9](https://github.com/webbertakken/cameras/commit/87a69a94e43fc625a76ae4e2fb78db76fbbd665d))
+* **deps:** resolve minimatch to ^11.0.1 ([#91](https://github.com/webbertakken/cameras/issues/91)) ([8fd7513](https://github.com/webbertakken/cameras/commit/8fd75135fd461f3dec38b22740bc454ab6aef97f))
+* **deps:** resolve tinypool to patched ^2.1.2 ([#80](https://github.com/webbertakken/cameras/issues/80)) ([4e482c9](https://github.com/webbertakken/cameras/commit/4e482c9a0659f88772e37c2749c66c10f846ef80))
+
+
+### Maintenance
+
+* **deps:** lock file maintenance ([#79](https://github.com/webbertakken/cameras/issues/79)) ([78092f0](https://github.com/webbertakken/cameras/commit/78092f071ea404b5e08633daeb22676ecc462539))
+* **deps:** lock file maintenance ([#81](https://github.com/webbertakken/cameras/issues/81)) ([ef1e316](https://github.com/webbertakken/cameras/commit/ef1e316f338aa82f16bbe39e44a24321c7fa1789))
+* **deps:** lock file maintenance ([#89](https://github.com/webbertakken/cameras/issues/89)) ([ea39f1a](https://github.com/webbertakken/cameras/commit/ea39f1a17f2aea945caf36f48aead85d49f4c04c))
+* **deps:** pin dependencies ([#82](https://github.com/webbertakken/cameras/issues/82)) ([c629cd1](https://github.com/webbertakken/cameras/commit/c629cd156d7abf7e32998accdae4aee0e042fd90))
+* **deps:** update all non-major dependencies ([#83](https://github.com/webbertakken/cameras/issues/83)) ([19fb2b5](https://github.com/webbertakken/cameras/commit/19fb2b51307e406aaa0744496d7da5bd595dcef7))
+* **deps:** update dependency @testing-library/jest-dom to v7 ([#72](https://github.com/webbertakken/cameras/issues/72)) ([3602bf5](https://github.com/webbertakken/cameras/commit/3602bf5ab6b9e666f0e50045cc6f3cabd9949dd1))
+* **deps:** update dependency @vitejs/plugin-react to v6 ([#73](https://github.com/webbertakken/cameras/issues/73)) ([8543222](https://github.com/webbertakken/cameras/commit/8543222b46415034ef2e7c5ba447d3e3b1faaf8b))
+* **deps:** update dependency eslint-plugin-unicorn to v79 ([#75](https://github.com/webbertakken/cameras/issues/75)) ([58518c5](https://github.com/webbertakken/cameras/commit/58518c55614aa551fa80f8f192409fd3827fdbe5))
+* **deps:** update dependency jsdom to v30 ([#76](https://github.com/webbertakken/cameras/issues/76)) ([fd928bb](https://github.com/webbertakken/cameras/commit/fd928bb4658d712362704720947b5d4b1387e229))
+* **deps:** update dependency lint-staged to v17 ([#77](https://github.com/webbertakken/cameras/issues/77)) ([bb008b7](https://github.com/webbertakken/cameras/commit/bb008b77cf2ffb809b346f7d8effab0350edb83f))
+* **deps:** update dependency typescript to v7 ([#78](https://github.com/webbertakken/cameras/issues/78)) ([98d68f8](https://github.com/webbertakken/cameras/commit/98d68f8582fe07cff10cda5c7fc9aabd11a94eb1))
+* **deps:** update github actions (major) ([#84](https://github.com/webbertakken/cameras/issues/84)) ([8878919](https://github.com/webbertakken/cameras/commit/8878919f0a4ed45619ecb994ac9093358e3cdda9))
+* **deps:** update node.js to v26 ([#85](https://github.com/webbertakken/cameras/issues/85)) ([f35eed9](https://github.com/webbertakken/cameras/commit/f35eed98a76fb24bee54374c73dd42402580faa8))
+* **deps:** update rust crate pollster to v1 ([#86](https://github.com/webbertakken/cameras/issues/86)) ([52f235c](https://github.com/webbertakken/cameras/commit/52f235cd79fd423974f31605fdf52d2e8195f3c6))
+* **deps:** update rust crate wgpu to v30 ([#87](https://github.com/webbertakken/cameras/issues/87)) ([5a42b2b](https://github.com/webbertakken/cameras/commit/5a42b2b083402195bb8d75cc2f10a85ed509cd9a))
+* **deps:** update vitest monorepo to v5 ([#88](https://github.com/webbertakken/cameras/issues/88)) ([5a8712b](https://github.com/webbertakken/cameras/commit/5a8712bc7f0a249c57676ba1b70a502961472148))
+
 ## [0.8.0](https://github.com/webbertakken/cameras/compare/v0.7.1...v0.8.0) (2026-10-25)
 
 
