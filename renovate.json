@@ -1,4 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>webbertakken/.github:renovate-config"]
+  "extends": ["local>webbertakken/.github:renovate-config"],
+  "packageRules": [
+    {
+      "description": "windows-core must stay on the windows crate's version line: #[implement] expands to ::windows_core paths that must match the windows crate's own windows-core. Bump both together, by hand, once windows publishes the matching release",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["windows-core"],
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": false
+    }
+  ]
 }
